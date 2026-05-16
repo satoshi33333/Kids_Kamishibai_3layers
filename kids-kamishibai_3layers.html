@@ -615,7 +615,7 @@ body {
   color: var(--orange);
   margin-bottom: 20px;
 }
-.filter-btns { display: flex; gap: 12px; justify-content: center; }
+
 .btn-use-suggestion {
   background: linear-gradient(135deg, var(--orange), var(--yellow));
   color: white;
@@ -627,6 +627,20 @@ body {
   font-weight: 800;
   cursor: pointer;
 }
+.btn-retry-input {
+  background: white;
+  color: var(--dark);
+  border: 3px solid #E0E0E0;
+  border-radius: 50px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-retry-input:hover { border-color: var(--pink); color: var(--pink); }
+.filter-btns { display: flex; flex-direction: column; gap: 10px; align-items: center; }
 .btn-keep-original {
   background: white;
   color: #999;
@@ -1308,6 +1322,7 @@ body {
     <div class="filter-suggestion" id="filter-suggestion">ことばをかんがえているよ…</div>
     <div class="filter-btns">
       <button class="btn-use-suggestion" onclick="hideFilterPopup(true)">このことばで つづける！ ✨</button>
+      <button class="btn-retry-input" onclick="hideFilterPopup(false)">もういちど やりなおす 🎙️</button>
     </div>
   </div>
 </div>
@@ -1519,13 +1534,14 @@ function getRandomOpening() {
 const MODE_SETTINGS = {
   issho: {
     label: '🌱 いっしょ',
-    maxTurns: 6,
+    maxTurns: 8,
     filterLevel: 'strict',
     hiraganaOnly: true,
     storyComplexity: 'simple',
     systemPrompt: 'あなたは4〜6さいの ちいさな こどもに よみきかせを する やさしい ナレーターです。ルール：①ひらがなのみ（かんじ・カタカナ使用禁止）②1文のみ・みじかく③あたたかく やさしい ないよう④どうぶつや にちじょうの できごと⑤こわい・くらい ないよう禁止⑥物語のつづきの文のみ出力',
-    openingFilter: ['animal', 'daily'], // どうぶつ・日常系のみ
-    artStyles: ['mukashi'],             // むかしばなしのみ推奨
+    openingFilter: ['animal', 'daily'],
+    artStyles: ['mukashi','anime','western'],
+    hideStyleBar: false,
     fontSize: '1.2rem',
     continuationLabel: '5かい',
   },
@@ -1557,20 +1573,10 @@ const MODE_SETTINGS = {
 
 function selectAgeMode(mode) {
   state.ageMode = mode;
-  // ボタンのselected状態更新
   document.querySelectorAll('.age-mode-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('agemode-' + mode).classList.add('selected');
-
-  // いっしょモードのとき絵スタイルをむかしばなしに固定・他を非表示
-  const cfg = MODE_SETTINGS[mode];
-  document.querySelectorAll('.style-btn').forEach(btn => {
-    const style = btn.id.replace('artstyle-', '');
-    btn.style.display = cfg.artStyles.includes(style) ? '' : 'none';
-  });
-  // むかしばなしを自動選択
-  if (!cfg.artStyles.includes(state.artStyle)) {
-    selectArtStyle('mukashi');
-  }
+  // 全モードで全スタイルを表示
+  document.querySelectorAll('.style-btn').forEach(btn => btn.style.display = '');
 }
 
 // ============================================================
@@ -1694,6 +1700,9 @@ function startGame() {
 
   // ストーリーテキストのフォントサイズ調整
   document.querySelectorAll('.story-text').forEach(el => el.style.fontSize = cfg.fontSize);
+
+  // 全モードでスタイルバーを表示
+  document.getElementById('art-style-bar').style.display = 'flex';
 
   buildTurnDots();
   updateCurrentPlayerBadge();
@@ -1863,8 +1872,8 @@ const SIMPLE_FILTER_WORDS = [
   // ひらがな
   'ばか','うんち','うんこ','きもい','しね','ころす','きらい','くそ','ちくしょう','あほ',
   'むかつく','うざい','きえろ','いじめ',
-  // 漢字・暴力・死関連
-  '死','殺','血','暴力','地獄','地獄','自殺','殴','刺','爆','爆弾',
+  // 漢字・暴力・死関連（爆発・爆弾は物語で自然なので除外）
+  '死','殺','血','暴力','地獄','自殺','殴','刺',
   '出血','墓','死亡','死体','遺体','銃','刀','ナイフ'
 ];
 
@@ -1928,9 +1937,16 @@ function showFilterPopup(text, suggestion, callback) {
 
 function hideFilterPopup(useSuggestion) {
   document.getElementById('filter-popup').classList.add('hidden');
-  // Always use the suggestion - never pass through the original inappropriate text
-  if (filterCallback) filterCallback(state.filterSuggestion);
-  filterCallback = null;
+  if (useSuggestion) {
+    // 言い換え案で続ける
+    if (filterCallback) filterCallback(state.filterSuggestion);
+    filterCallback = null;
+  } else {
+    // やりなおす：入力をクリアしてキャンセル
+    filterCallback = null;
+    clearInput();
+    document.getElementById('btn-send').disabled = true;
+  }
 }
 
 // ============================================================
@@ -1958,12 +1974,15 @@ async function submitTurn() {
 async function processTurn(text) {
   const player = state.players[state.currentPlayerIdx];
 
+  // いっしょ・ぼうけんモードでは漢字をひらがなに変換して表示
+  const displayText = await toHiragana(text);
+
   // Add to story log
-  addStoryBubble(player, text);
+  addStoryBubble(player, displayText);
 
   const turnData = {
     playerIdx: state.currentPlayerIdx,
-    text,
+    text: displayText,
     imageUrl: null,
     audioBlob: state.pendingAudioBlob,
     audioUrl: state.pendingAudioBlob ? URL.createObjectURL(state.pendingAudioBlob) : null,
@@ -2166,6 +2185,27 @@ function addStoryBubble(player, text) {
 
 function escapeHtml(str) {
   return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ユーザー入力の漢字をひらがなに変換（クリエイターモード以外で適用）
+async function toHiragana(text) {
+  // クリエイターモードは漢字OK・変換不要
+  if (state.ageMode === 'creator') return text;
+  // 漢字が含まれていなければそのまま返す
+  if (!/[一-龯]/.test(text)) return text;
+  // Anthropic APIがなければそのまま返す
+  if (!state.keys.anthropic) return text;
+  try {
+    const result = await callAnthropic([{
+      role: 'user',
+      content: `以下の文の漢字をすべてひらがなに変換してください。文の意味・内容はそのまま保ってください。ひらがなに変換した文のみを返してください（説明不要）。
+文:「${text}」`
+    }], 'ひらがなに変換した文のみ出力する。', 150);
+    // 結果が元テキストと極端に違う場合は元テキストを返す
+    return result.trim() || text;
+  } catch(e) {
+    return text;
+  }
 }
 
 
