@@ -1366,6 +1366,7 @@ let state = {
   keys: { anthropic: '', openai: '', google: '' },
   filterSuggestion: '',
   lastInputWasFiltered: false,
+  filteredTurnIndices: [],
   slideInterval: null,
   artStyle: 'mukashi',  // mukashi | anime | western
   ageMode: 'bouken',    // issho | bouken | creator
@@ -1863,6 +1864,8 @@ function stopRecording() {
 function clearInput() {
   state.recognizedText = '';
   state.pendingAudioBlob = null;
+  state.filteredTurnIndices = [];
+  state.lastInputWasFiltered = false;
   document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
   document.getElementById('btn-send').disabled = true;
   document.getElementById('text-input').value = '';
@@ -2018,12 +2021,16 @@ async function processTurn(text) {
   updateTurnDots();
 
   // Generate image
-  // フィルターを通ったテキストは画像生成に使わず安全な代替テキストを使う
+  // フィルターを通ったターンのインデックスを記録し、contextから除外する
+  const currentTurnIdx = state.turns.length - 1;
+  if (state.lastInputWasFiltered) {
+    state.filteredTurnIndices.push(currentTurnIdx);
+  }
   const imageText = state.lastInputWasFiltered
     ? getSafeImageText()
     : displayText;
-  state.lastInputWasFiltered = false; // フラグをリセット
-  await generateSceneImage(imageText, state.turns.length - 1);
+  state.lastInputWasFiltered = false;
+  await generateSceneImage(imageText, currentTurnIdx);
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2104,7 +2111,12 @@ async function generateSceneImage(text, turnIdx) {
   document.getElementById(overlayId).classList.remove('hidden');
   document.getElementById('gen-text').textContent = 'えをかいています…🎨';
 
-  const storyContext = state.turns.slice(0, turnIdx + 1).map(t => t.text).join(' ');
+  // フィルターされたターンのテキストをcontextから除外（APIへの汚染を防ぐ）
+  const storyContext = state.turns
+    .slice(0, turnIdx + 1)
+    .filter((_, i) => !state.filteredTurnIndices.includes(i))
+    .map(t => t.text)
+    .join(' ');
   const imagePrompt = buildImagePrompt(storyContext, text);
 
   try {
@@ -2473,6 +2485,8 @@ function resetGame() {
   state.currentPlayerIdx = 0;
   state.recognizedText = '';
   state.pendingAudioBlob = null;
+  state.filteredTurnIndices = [];
+  state.lastInputWasFiltered = false;
   document.getElementById('story-log').innerHTML = '';
   document.getElementById('scene-image').style.display = 'none';
   document.getElementById('scene-placeholder').style.display = 'flex';
