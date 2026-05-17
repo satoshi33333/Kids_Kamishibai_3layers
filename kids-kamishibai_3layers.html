@@ -1365,6 +1365,7 @@ let state = {
   pendingAudioBlob: null,
   keys: { anthropic: '', openai: '', google: '' },
   filterSuggestion: '',
+  lastInputWasFiltered: false,
   slideInterval: null,
   artStyle: 'mukashi',  // mukashi | anime | western
   ageMode: 'bouken',    // issho | bouken | creator
@@ -1961,11 +1962,11 @@ function showFilterPopup(text, suggestion, callback) {
 function hideFilterPopup(useSuggestion) {
   document.getElementById('filter-popup').classList.add('hidden');
   if (useSuggestion) {
-    // 言い換え案で続ける
+    state.lastInputWasFiltered = true; // フィルター済みフラグ
     if (filterCallback) filterCallback(state.filterSuggestion);
     filterCallback = null;
   } else {
-    // やりなおす：入力をクリアしてキャンセル
+    state.lastInputWasFiltered = false;
     filterCallback = null;
     clearInput();
     document.getElementById('btn-send').disabled = true;
@@ -2017,7 +2018,12 @@ async function processTurn(text) {
   updateTurnDots();
 
   // Generate image
-  await generateSceneImage(text, state.turns.length - 1);
+  // フィルターを通ったテキストは画像生成に使わず安全な代替テキストを使う
+  const imageText = state.lastInputWasFiltered
+    ? getSafeImageText()
+    : displayText;
+  state.lastInputWasFiltered = false; // フラグをリセット
+  await generateSceneImage(imageText, state.turns.length - 1);
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2178,6 +2184,19 @@ function showImageError(title, detail) {
     </div>`;
   document.getElementById('scene-image').style.display = 'none';
   showToast(`⚠️ えのせいせい: ${title}`);
+}
+
+// フィルターされた入力の代わりに使う安全な場面描写
+function getSafeImageText() {
+  const safePhrases = [
+    'きれいなはなばたけで あそんでいる',
+    'おおきなきのしたで やすんでいる',
+    'あおいそらをながめている',
+    'ともだちといっしょに わらっている',
+    'ちいさないぬと なかよくしている',
+    'たのしそうに うたをうたっている',
+  ];
+  return safePhrases[Math.floor(Math.random() * safePhrases.length)];
 }
 
 function buildImagePrompt(context, currentText) {
