@@ -1121,6 +1121,21 @@ body {
     </div>
   </div>
 
+  <!-- First Turn Select -->
+  <div class="setup-card" id="first-turn-card" style="border-color:var(--mint);max-width:600px;width:100%;">
+    <h3>🎬 だれからはじめる？</h3>
+    <div class="mode-grid">
+      <button class="mode-btn" onclick="selectFirstTurn('ai')" id="first-ai">
+        <span class="mode-icon">✨</span>
+        AIからはじめる
+      </button>
+      <button class="mode-btn selected" onclick="selectFirstTurn('human')" id="first-human">
+        <span class="mode-icon">🙋</span>
+        じぶんからはじめる
+      </button>
+    </div>
+  </div>
+
   <!-- Player Count -->
   <div class="setup-card" id="player-count-card">
     <h3>👶 こどものかず</h3>
@@ -1371,6 +1386,7 @@ let state = {
   artStyle: 'mukashi',  // mukashi | anime | western
   ageMode: 'bouken',    // issho | bouken | creator
   mainCharacter: null,  // ゲーム開始時に決定・全シーンで統一
+  firstTurn: 'ai',      // ai | human
 };
 
 let currentSlide = 0;
@@ -1630,7 +1646,16 @@ function selectMode(mode) {
   const needsAdult = ['ai-child-adult','human-only','ai-group'].includes(mode);
   document.getElementById('adult-row').style.display = needsAdult ? 'flex' : 'none';
   if (!needsAdult) { adultCount = 0; document.getElementById('adult-count').textContent = '0'; }
+  // AIがいるモードのときだけ「だれからはじめる？」を表示
+  const hasAI = mode !== 'human-only';
+  document.getElementById('first-turn-card').style.display = hasAI ? '' : 'none';
   updatePlayerNameInputs();
+}
+
+function selectFirstTurn(who) {
+  state.firstTurn = who;
+  document.getElementById('first-ai').classList.toggle('selected', who === 'ai');
+  document.getElementById('first-human').classList.toggle('selected', who === 'human');
 }
 
 function changeCount(type, delta) {
@@ -1687,7 +1712,12 @@ function startGame() {
 
   // Add AI player if needed
   if (state.mode !== 'human-only') {
-    state.players.unshift({ id: 'ai', name: 'AIおはなし', role: 'ai', avatar: '✨' });
+    const aiPlayer = { id: 'ai', name: 'AIおはなし', role: 'ai', avatar: '✨' };
+    if (state.firstTurn === 'ai') {
+      state.players.unshift(aiPlayer); // AIが先頭→AIからスタート
+    } else {
+      state.players.push(aiPlayer);    // AIが末尾→人間からスタート
+    }
   }
 
   state.currentPlayerIdx = 0;
