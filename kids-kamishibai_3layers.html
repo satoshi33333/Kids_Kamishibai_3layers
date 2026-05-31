@@ -530,26 +530,49 @@ body {
   50% { height: 35px; }
 }
 
-.recognized-text {
+.recognized-text-edit {
   background: rgba(255,255,255,0.9);
   border: 3px dashed var(--pink);
   border-radius: 16px;
-  padding: 12px 20px;
+  padding: 12px 48px 12px 16px;
   font-size: 1.1rem;
+  font-family: inherit;
   font-weight: 700;
   color: var(--dark);
-  min-height: 50px;
-  max-height: 120px;
+  min-height: 60px;
   width: 100%;
   text-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow-y: auto;
+  resize: none;
+  outline: none;
   word-break: break-all;
   overflow-wrap: break-word;
   box-sizing: border-box;
+  transition: border-color 0.2s, background 0.2s;
+  line-height: 1.5;
 }
+.recognized-text-edit:not([readonly]) {
+  border-color: var(--purple);
+  border-style: solid;
+  background: white;
+  text-align: left;
+}
+.recognized-text-edit::placeholder { color: #aaa; font-weight: 400; }
+/* 編集ボタン */
+.btn-edit-toggle {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 2px solid var(--purple);
+  background: white;
+  font-size: 1rem;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s;
+  z-index: 2;
+}
+.btn-edit-toggle:hover { background: var(--purple); }
+.btn-edit-toggle.editing { background: var(--purple); border-color: var(--purple); }
 
 .voice-action-row {
   display: flex;
@@ -1083,7 +1106,7 @@ body {
 .grid-view.visible { display: flex; }
 .scene-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
 }
 .scene-grid-item {
@@ -1114,6 +1137,18 @@ body {
   display: flex; align-items: center; justify-content: center;
   color: rgba(255,255,255,0.3);
   font-size: 1.5rem;
+}
+.scene-grid-item .grid-text {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.82));
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 10px 5px 4px;
+  text-shadow: 0 1px 2px black;
+  word-break: break-all;
 }
 .btn-back-slideshow {
   background: linear-gradient(135deg, var(--purple), var(--sky));
@@ -1375,30 +1410,9 @@ body {
   </div>
 
   <div class="game-main">
-    <!-- Kamishibai frame -->
-    <div class="kamishibai-frame">
-      <div class="kamishibai-border"></div>
-      <div id="scene-placeholder" class="scene-placeholder">
-        <div class="ph-icon">🎭</div>
-        <p>おはなしをはじめよう！</p>
-      </div>
-      <img id="scene-image" src="" alt="" style="display:none;"/>
-      <div id="gen-overlay" class="generating-overlay hidden">
-        <div class="gen-spinner"></div>
-        <div class="gen-text" id="gen-text">えをかいています…</div>
-      </div>
-    </div>
-
-    <!-- Art style switcher -->
-    <div class="art-style-bar" id="art-style-bar">
-      <span class="bar-label">🎨</span>
-      <button class="style-chip active" onclick="switchArtStyle('mukashi')" id="chip-mukashi">🏮 むかし</button>
-      <button class="style-chip" onclick="switchArtStyle('anime')" id="chip-anime">✨ アニメ</button>
-
-      <button class="style-chip" onclick="switchArtStyle('western')" id="chip-western">🌟 アメコミ</button>
-    </div>
-
-    <!-- バックグラウンド生成プログレスバー -->
+    <!-- gen-overlay（非表示・generateSceneImageが参照） -->
+    <div id="gen-overlay" class="hidden" style="display:none!important;"></div>
+    <img id="scene-image" src="" alt="" style="display:none!important;"/><!-- バックグラウンド生成プログレスバー -->
     <div class="bg-gen-progress" id="bg-gen-progress" style="display:none;">
       <span>🎨</span>
       <div class="bg-gen-bar-track">
@@ -1434,8 +1448,20 @@ body {
         <span class="btn-label">おしながら はなす</span>
       </button>
 
-      <div class="recognized-text" id="recognized-text">
-        ここにことばがでるよ 👆
+      <!-- 認識テキスト + 編集エリア -->
+      <div style="width:100%;position:relative;">
+        <textarea
+          id="recognized-text"
+          class="recognized-text-edit"
+          placeholder="ここにことばがでるよ 👆"
+          oninput="onRecognizedTextEdit(this.value)"
+          rows="2"
+          readonly
+        ></textarea>
+        <button class="btn-edit-toggle" id="btn-edit-toggle" onclick="toggleEditMode()" style="display:none;" title="編集する">✏️</button>
+      </div>
+      <div id="edit-hint" style="display:none;font-size:0.75rem;color:var(--purple);font-weight:700;text-align:center;">
+        ✏️ おとなのかた：ことばをなおせます
       </div>
 
       <div class="voice-action-row">
@@ -2033,7 +2059,9 @@ function initSpeechRecognition() {
       transcript += e.results[i][0].transcript;
     }
     state.recognizedText = transcript;
-    document.getElementById('recognized-text').textContent = transcript || '…きいているよ…';
+    const ta = document.getElementById('recognized-text');
+    ta.value = transcript || '';
+    ta.placeholder = transcript ? '' : '…きいているよ…';
     if (e.results[e.results.length - 1].isFinal) {
       document.getElementById('btn-send').disabled = !transcript.trim();
     }
@@ -2088,13 +2116,50 @@ function stopRecording() {
 
   setTimeout(() => {
     const text = state.recognizedText.trim();
+    const ta = document.getElementById('recognized-text');
+    const editBtn = document.getElementById('btn-edit-toggle');
+    const hint = document.getElementById('edit-hint');
     if (text) {
+      ta.value = text;
+      ta.readOnly = true;
+      if (editBtn) editBtn.style.display = 'flex';
+      if (hint) hint.style.display = 'block';
       document.getElementById('btn-send').disabled = false;
-      document.getElementById('recognized-text').textContent = text;
     } else {
-      document.getElementById('recognized-text').textContent = 'もういちどはなしてね 🎙️';
+      ta.value = '';
+      ta.placeholder = 'もういちどはなしてね 🎙️';
+      if (editBtn) editBtn.style.display = 'none';
+      if (hint) hint.style.display = 'none';
+      document.getElementById('btn-send').disabled = true;
     }
   }, 400);
+}
+
+function toggleEditMode() {
+  const ta = document.getElementById('recognized-text');
+  const btn = document.getElementById('btn-edit-toggle');
+  const hint = document.getElementById('edit-hint');
+  const isEditing = !ta.readOnly;
+  if (isEditing) {
+    ta.readOnly = true;
+    btn.classList.remove('editing');
+    btn.title = '編集する';
+    hint.style.display = 'none';
+    state.recognizedText = ta.value.trim();
+    document.getElementById('btn-send').disabled = !ta.value.trim();
+  } else {
+    ta.readOnly = false;
+    ta.focus();
+    ta.selectionStart = ta.value.length;
+    btn.classList.add('editing');
+    btn.title = '編集おわり ✓';
+    hint.style.display = 'none';
+  }
+}
+
+function onRecognizedTextEdit(val) {
+  state.recognizedText = val.trim();
+  document.getElementById('btn-send').disabled = !val.trim();
 }
 
 function clearInput() {
@@ -2102,7 +2167,14 @@ function clearInput() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
-  document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
+  const ta = document.getElementById('recognized-text');
+  ta.value = '';
+  ta.placeholder = 'ここにことばがでるよ 👆';
+  ta.readOnly = true;
+  const editBtn = document.getElementById('btn-edit-toggle');
+  if (editBtn) { editBtn.style.display = 'none'; editBtn.classList.remove('editing'); }
+  const hint = document.getElementById('edit-hint');
+  if (hint) hint.style.display = 'none';
   document.getElementById('btn-send').disabled = true;
   document.getElementById('text-input').value = '';
 }
@@ -2623,10 +2695,13 @@ function buildSceneGrid() {
     const item = document.createElement('div');
     item.className = 'scene-grid-item';
     item.onclick = () => { showSlideshow(); gotoSlide(i); };
-    item.innerHTML = '<span class="grid-num">' + (i + 1) + '</span>' +
+    const shortText = turn.text.length > 28 ? turn.text.substring(0, 28) + '…' : turn.text;
+    item.innerHTML =
+      '<span class="grid-num">' + (i + 1) + '</span>' +
       (turn.imageUrl
         ? '<img src="' + turn.imageUrl + '" alt="シーン' + (i+1) + '">'
-        : '<div class="grid-no-img">🎭</div>');
+        : '<div class="grid-no-img">🎭</div>') +
+      '<div class="grid-text">' + shortText + '</div>';
     grid.appendChild(item);
   });
 }
