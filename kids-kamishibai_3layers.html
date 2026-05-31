@@ -1375,19 +1375,11 @@ body {
   </div>
 
   <div class="game-main">
-    <!-- Kamishibai frame -->
-    <div class="kamishibai-frame">
-      <div class="kamishibai-border"></div>
-      <div id="scene-placeholder" class="scene-placeholder">
-        <div class="ph-icon">🎭</div>
-        <p>おはなしをはじめよう！</p>
-      </div>
-      <img id="scene-image" src="" alt="" style="display:none;"/>
-      <div id="gen-overlay" class="generating-overlay hidden">
-        <div class="gen-spinner"></div>
-        <div class="gen-text" id="gen-text">えをかいています…</div>
-      </div>
-    </div>
+    <!-- gen-overlay・scene-image（非表示・JSが参照） -->
+    <div id="gen-overlay" style="display:none!important;"></div>
+    <div id="gen-text" style="display:none!important;"></div>
+    <img id="scene-image" src="" alt="" style="display:none!important;"/>
+    <div id="scene-placeholder" style="display:none!important;"></div>
 
     <!-- art-style-bar removed -->
 
@@ -2358,9 +2350,7 @@ function updateBgGenProgress() {
 async function generateSceneImage(text, turnIdx) {
   if (!state.keys.openai) return;
 
-  const overlayId = 'gen-overlay';
-  document.getElementById(overlayId).classList.remove('hidden');
-  document.getElementById('gen-text').textContent = 'えをかいています…🎨';
+  // (gen-overlay removed)
 
   // フィルターされたターンのテキストをcontextから除外（APIへの汚染を防ぐ）
   const storyContext = state.turns
@@ -2430,23 +2420,14 @@ async function generateSceneImage(text, turnIdx) {
     console.error('Image generation error:', e);
     console.warn('Image gen error:', e.message); showToast('⚠️ えのせいせいにしっぱいしたよ');
   } finally {
-    document.getElementById(overlayId).classList.add('hidden');
+    // (gen-overlay removed)
   }
 }
 
 function showImageError(title, detail) {
-  // プレースホルダーにエラー内容を表示
-  const ph = document.getElementById('scene-placeholder');
-  ph.style.display = 'flex';
-  ph.innerHTML = `
-    <div style="text-align:center;padding:20px;color:white;">
-      <div style="font-size:3rem;margin-bottom:8px;">😢</div>
-      <div style="font-size:1rem;font-weight:800;color:#FFD93D;margin-bottom:6px;">えがつくれなかったよ</div>
-      <div style="font-size:0.75rem;opacity:0.8;margin-bottom:4px;">${title}</div>
-      <div style="font-size:0.65rem;opacity:0.6;word-break:break-all;max-height:60px;overflow:hidden;">${detail}</div>
-    </div>`;
-  document.getElementById('scene-image').style.display = 'none';
+  // フレーム削除済みのためトーストのみ表示
   showToast(`⚠️ えのせいせい: ${title}`);
+  console.warn('Image error:', title, detail);
 }
 
 // フィルターされた入力の代わりに使う安全な場面描写
@@ -2820,8 +2801,7 @@ function resetGame() {
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
   document.getElementById('story-log').innerHTML = '';
-  document.getElementById('scene-image').style.display = 'none';
-  document.getElementById('scene-placeholder').style.display = 'flex';
+  // scene-image/placeholder removed from game screen
   document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
   document.getElementById('btn-send').disabled = true;
   showScreen('title');
