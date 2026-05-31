@@ -1012,6 +1012,139 @@ body {
 /* Ruby / furigana */
 
 
+/* ===== 画像生成待ち画面 ===== */
+#screen-waiting {
+  background: linear-gradient(160deg, #1a1a2e 0%, #2d1b69 100%);
+  color: white;
+  justify-content: center;
+  align-items: center;
+  gap: 24px;
+}
+.waiting-title {
+  font-size: 2rem;
+  font-weight: 800;
+  text-align: center;
+  background: linear-gradient(135deg, var(--yellow), var(--orange));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.waiting-spinner {
+  width: 100px; height: 100px;
+  border: 8px solid rgba(255,255,255,0.15);
+  border-top-color: var(--yellow);
+  border-radius: 50%;
+  animation: spin 1.2s linear infinite;
+}
+.waiting-progress-wrap {
+  width: 280px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 50px;
+  height: 14px;
+  overflow: hidden;
+}
+.waiting-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--purple), var(--sky));
+  border-radius: 50px;
+  transition: width 0.4s ease;
+}
+.waiting-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.85);
+  text-align: center;
+}
+.waiting-scene-icons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+  max-width: 320px;
+}
+.waiting-icon {
+  width: 36px; height: 36px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.1);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem;
+  transition: background 0.3s;
+}
+.waiting-icon.done { background: rgba(107,203,119,0.4); }
+
+/* ===== 全シーングリッド ===== */
+.grid-view {
+  display: none;
+  width: 100%;
+  max-width: 640px;
+  flex-direction: column;
+  gap: 16px;
+}
+.grid-view.visible { display: flex; }
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.scene-grid-item {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 4/3;
+  background: #1a1a2e;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+.scene-grid-item:hover { border-color: var(--yellow); transform: scale(1.03); }
+.scene-grid-item img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.scene-grid-item .grid-num {
+  position: absolute;
+  top: 4px; left: 6px;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: white;
+  text-shadow: 0 1px 3px black;
+}
+.scene-grid-item .grid-no-img {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,0.3);
+  font-size: 1.5rem;
+}
+.btn-back-slideshow {
+  background: linear-gradient(135deg, var(--purple), var(--sky));
+  color: white;
+  border: none;
+  border-radius: 50px;
+  padding: 14px 30px;
+  font-size: 1.1rem;
+  font-family: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 5px 0 #3a1a8a;
+  transition: all 0.15s;
+  align-self: center;
+}
+.btn-back-slideshow:hover { transform: translateY(-2px); }
+.btn-show-grid {
+  background: rgba(255,255,255,0.15);
+  color: white;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 50px;
+  padding: 12px 24px;
+  font-size: 1rem;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  backdrop-filter: blur(10px);
+}
+.btn-show-grid:hover { background: rgba(255,255,255,0.25); }
+
 /* UTILS */
 .hidden { display: none !important; }
 .mt-auto { margin-top: auto; }
@@ -1325,6 +1458,17 @@ body {
 </div>
 
 <!-- ========== SCREEN 4: FINALE ========== -->
+<!-- ========== SCREEN: 画像生成待ち ========== -->
+<div id="screen-waiting" class="screen">
+  <div class="waiting-title">🎨 えをかいているよ…</div>
+  <div class="waiting-spinner"></div>
+  <div class="waiting-scene-icons" id="waiting-icons"></div>
+  <div class="waiting-progress-wrap">
+    <div class="waiting-progress-fill" id="waiting-progress-fill" style="width:0%"></div>
+  </div>
+  <div class="waiting-label" id="waiting-label">0 / 0 まいできた！</div>
+</div>
+
 <div id="screen-finale" class="screen">
   <div class="finale-header">🌟 できあがり！ 🌟</div>
   <div style="font-size:0.9rem;color:rgba(255,255,255,0.7);text-align:center;margin-bottom:12px;">
@@ -1361,9 +1505,25 @@ body {
     </button>
   </div>
 
-  <button class="btn-again" onclick="resetGame()">
-    🔄 もういちど あそぶ！
-  </button>
+  <!-- 全シーングリッドビュー -->
+  <div class="grid-view" id="grid-view">
+    <div class="scene-grid" id="scene-grid"></div>
+    <button class="btn-back-slideshow" onclick="showSlideshow()">
+      ◀ スライドショーにもどる
+    </button>
+  </div>
+
+  <!-- 通常ボタン -->
+  <div id="finale-normal-btns">
+    <div class="finale-controls" style="margin-bottom:10px;">
+      <button class="btn-show-grid" id="btn-show-grid" onclick="showGridView()" style="display:none;">
+        🖼 ぜんぶのえをみる
+      </button>
+    </div>
+    <button class="btn-again" onclick="resetGame()">
+      🔄 もういちど あそぶ！
+    </button>
+  </div>
 </div>
 
 <!-- ========== POPUPS ========== -->
@@ -2411,16 +2571,82 @@ function continueStory() {
 // ============================================================
 async function launchFinale() {
   if (bgGenTotal > 0 && bgGenCompleted < bgGenTotal) {
-    showToast('🎨 えをしあげているよ…もうすこし！');
+    // 待機画面を表示しながら生成完了を待つ
+    showScreen('waiting');
+    buildWaitingIcons();
     const t = Date.now();
-    while (bgGenCompleted < bgGenTotal && Date.now() - t < 30000) {
+    while (bgGenCompleted < bgGenTotal && Date.now() - t < 60000) {
+      updateWaitingProgress();
       await new Promise(r => setTimeout(r, 400));
     }
   }
   shootConfetti();
   buildFinaleDots();
+  buildSceneGrid();
   gotoSlide(0);
+  // 全シーンを見るボタンを表示
+  document.getElementById('btn-show-grid').style.display = '';
   showScreen('finale');
+}
+
+function buildWaitingIcons() {
+  const container = document.getElementById('waiting-icons');
+  container.innerHTML = '';
+  state.turns.forEach((_, i) => {
+    const div = document.createElement('div');
+    div.className = 'waiting-icon';
+    div.id = 'wicon-' + i;
+    div.textContent = '🎨';
+    container.appendChild(div);
+  });
+  updateWaitingProgress();
+}
+
+function updateWaitingProgress() {
+  const pct = bgGenTotal > 0 ? Math.round((bgGenCompleted / bgGenTotal) * 100) : 0;
+  const fill = document.getElementById('waiting-progress-fill');
+  const label = document.getElementById('waiting-label');
+  if (fill) fill.style.width = pct + '%';
+  if (label) label.textContent = bgGenCompleted + ' / ' + bgGenTotal + ' まいできた！';
+  // 完了したアイコンを更新
+  state.turns.forEach((t, i) => {
+    const icon = document.getElementById('wicon-' + i);
+    if (icon && t.imageUrl) icon.classList.add('done'), icon.textContent = '✅';
+  });
+}
+
+function buildSceneGrid() {
+  const grid = document.getElementById('scene-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  state.turns.forEach((turn, i) => {
+    const item = document.createElement('div');
+    item.className = 'scene-grid-item';
+    item.onclick = () => { showSlideshow(); gotoSlide(i); };
+    item.innerHTML = '<span class="grid-num">' + (i + 1) + '</span>' +
+      (turn.imageUrl
+        ? '<img src="' + turn.imageUrl + '" alt="シーン' + (i+1) + '">'
+        : '<div class="grid-no-img">🎭</div>');
+    grid.appendChild(item);
+  });
+}
+
+function showGridView() {
+  document.getElementById('grid-view').classList.add('visible');
+  document.getElementById('finale-normal-btns').style.display = 'none';
+  document.querySelector('.finale-frame').style.display = 'none';
+  document.querySelector('.slide-nav').style.display = 'none';
+  document.getElementById('finale-dots').style.display = 'none';
+  document.querySelector('.finale-controls').style.display = 'none';
+}
+
+function showSlideshow() {
+  document.getElementById('grid-view').classList.remove('visible');
+  document.getElementById('finale-normal-btns').style.display = '';
+  document.querySelector('.finale-frame').style.display = '';
+  document.querySelector('.slide-nav').style.display = '';
+  document.getElementById('finale-dots').style.display = '';
+  document.querySelector('.finale-controls').style.display = '';
 }
 
 function buildFinaleDots() {
@@ -2479,6 +2705,14 @@ async function playSlide(idx) {
     isPlaying = false;
     document.getElementById('btn-playback').innerHTML = '▶️ さいせいする！';
     document.getElementById('audio-playing-badge').classList.add('hidden');
+    // 全再生終了 → 「ぜんぶのえをみる」ボタンをアニメーションで強調
+    const gridBtn = document.getElementById('btn-show-grid');
+    if (gridBtn) {
+      gridBtn.style.animation = 'bounce 1s ease-in-out 3';
+      gridBtn.style.background = 'linear-gradient(135deg, var(--yellow), var(--orange))';
+      gridBtn.style.color = 'white';
+      gridBtn.style.borderColor = 'transparent';
+    }
     return;
   }
 
