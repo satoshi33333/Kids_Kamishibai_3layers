@@ -1579,6 +1579,15 @@ body {
     <div class="waiting-progress-fill" id="waiting-progress-fill" style="width:0%"></div>
   </div>
   <div class="waiting-label" id="waiting-label">0 / 0 まいできた！</div>
+
+  <!-- 保護者向けリアルタイム状況説明 -->
+  <div id="waiting-status-box" style="margin-top:20px;background:rgba(255,255,255,0.1);border-radius:16px;padding:16px 20px;max-width:320px;text-align:left;line-height:1.7;min-height:80px;">
+    <div style="font-size:0.8rem;color:rgba(255,255,255,0.6);font-weight:700;margin-bottom:6px;">👨‍👩‍👧 おとなのかたへ</div>
+    <div id="waiting-status-text" style="font-size:0.85rem;color:white;font-weight:700;line-height:1.6;">
+      準備中…
+    </div>
+  </div>
+
   <button onclick="skipWaiting()" style="margin-top:16px;background:rgba(255,255,255,0.15);color:white;border:2px solid rgba(255,255,255,0.4);border-radius:50px;padding:10px 24px;font-family:inherit;font-size:0.9rem;font-weight:700;cursor:pointer;">
     このまま すすむ →
   </button>
@@ -2640,26 +2649,43 @@ async function processImageQueue() {
   imageGenRunning = true;
   while (imageGenQueue.length > 0) {
     const { text, turnIdx } = imageGenQueue.shift();
+    const currentNum = bgGenCompleted + 1;
+    // 生成開始を通知
+    updateWaitingStatus('generating', { current: currentNum, total: bgGenTotal });
     try {
       await generateSceneImage(sanitizeImageText(text), turnIdx);
     } catch(e) {
       console.warn('Image gen failed for turn', turnIdx, e.message);
+      updateWaitingStatus('error_network', { msg: e.message?.substring(0, 40) || 'unknown' });
     }
     bgGenCompleted++;
     updateBgGenProgress();
     if (bgGenCompleted >= bgGenTotal) {
       const b = document.getElementById('bg-gen-progress');
       if (b) setTimeout(() => b.style.display = 'none', 1500);
+      updateWaitingStatus('done', {});
+    } else {
+      updateWaitingStatus('partial_done', { done: bgGenCompleted, total: bgGenTotal });
     }
     if (imageGenQueue.length > 0) {
       if (state.safetyBlocked) {
-        // 安全システムブロック後は60秒冷却してから再開
+        // 安全システムブロック後は60秒カウントダウン
         updateBgGenProgressLabel('⏳ あんぜんシステムが はたらきました。しばらく まってね…');
-        await new Promise(r => setTimeout(r, 60000));
+        let sec = 60;
+        while (sec > 0 && state.safetyBlocked) {
+          updateWaitingStatus('safety_cooldown', { sec });
+          await new Promise(r => setTimeout(r, 1000));
+          sec--;
+        }
         state.safetyBlocked = false;
       } else {
-        // 直列生成なので短い間隔でOK（レート制限回避）
-        await new Promise(r => setTimeout(r, 3000));
+        // レート制限対応の待機（カウントダウン表示）
+        let sec = 3;
+        while (sec > 0) {
+          updateWaitingStatus('waiting_rate', { sec, current: bgGenCompleted + 1, total: bgGenTotal });
+          await new Promise(r => setTimeout(r, 1000));
+          sec--;
+        }
       }
     }
   }
@@ -2727,6 +2753,12 @@ async function generateSceneImage(text, turnIdx) {
         showSafetyBlockMessage();
       } else if (res.status === 400) {
         showImageError('えのせいせいにしっぱいしたよ', 'もうすこし かんたんな おはなしに してみよう！');
+      } else if (res.status === 401 || errMsg.includes('invalid_api_key') || errMsg.includes('Incorrect API key')) {
+        updateWaitingStatus('error_auth', {});
+        showSafetyBlockMessage();
+      } else if (res.status === 429 || errMsg.includes('rate_limit') || errMsg.includes('quota')) {
+        updateWaitingStatus('error_auth', { msg: 'APIの残高不足またはレート制限超過' });
+        showImageError('残高不足 / レート超過', errMsg.substring(0, 60));
       } else {
         showImageError(`エラー ${res.status}`, errMsg.substring(0, 80));
       }
@@ -2918,6 +2950,22 @@ async function launchFinale() {
   // 全シーンを見るボタンを表示
   document.getElementById('btn-show-grid').style.display = '';
   showScreen('finale');
+}
+
+// リアルタイムの状況説明を更新
+function updateWaitingStatus(type, extra) {
+  const el = document.getElementById('waiting-status-text');
+  if (!el) return;
+  const msgs = {
+    generating: () => `第 ${extra.current} 枚目を生成中です…<br><span style="font-size:0.78rem;color:rgba(255,255,255,0.7);font-weight:400;">（全 ${extra.total} 枚）</span>`,
+    waiting_rate: () => `⏳ OpenAIのレート制限（1分5枚）に達したため<br>あと約 <span style="color:#FFD93D;">${extra.sec} 秒</span> 待機しています`,
+    safety_cooldown: () => `🛡 ストーリー内の言葉がOpenAIの安全システムに引っかかりました。<br><span style="color:#FFD93D;">約 ${extra.sec} 秒</span> 後に再開します`,
+    error_network: () => `⚠️ 通信エラーが発生しました（${extra.msg}）<br>次の枚数の生成を試みています…`,
+    error_auth:    () => `🔑 APIキーが無効または残高不足です<br>OpenAIのダッシュボードをご確認ください`,
+    done:          () => `✅ 全部の絵ができました！`,
+    partial_done:  () => `第 ${extra.done} 枚完了 / ${extra.total} 枚中<br><span style="font-size:0.78rem;color:rgba(255,255,255,0.7);">残りを生成中…</span>`,
+  };
+  el.innerHTML = msgs[type] ? msgs[type]() : extra?.msg || '';
 }
 
 function skipWaiting() {
