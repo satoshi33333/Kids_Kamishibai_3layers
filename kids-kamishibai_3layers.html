@@ -1579,6 +1579,9 @@ body {
     <div class="waiting-progress-fill" id="waiting-progress-fill" style="width:0%"></div>
   </div>
   <div class="waiting-label" id="waiting-label">0 / 0 まいできた！</div>
+  <button onclick="skipWaiting()" style="margin-top:16px;background:rgba(255,255,255,0.15);color:white;border:2px solid rgba(255,255,255,0.4);border-radius:50px;padding:10px 24px;font-family:inherit;font-size:0.9rem;font-weight:700;cursor:pointer;">
+    このまま すすむ →
+  </button>
 </div>
 
 <div id="screen-finale" class="screen">
@@ -2655,8 +2658,8 @@ async function processImageQueue() {
         await new Promise(r => setTimeout(r, 60000));
         state.safetyBlocked = false;
       } else {
-        // 通常のレート制限対応（12秒/枚）
-        await new Promise(r => setTimeout(r, 12500));
+        // 直列生成なので短い間隔でOK（レート制限回避）
+        await new Promise(r => setTimeout(r, 3000));
       }
     }
   }
@@ -2893,11 +2896,20 @@ async function launchFinale() {
     // 待機画面を表示しながら生成完了を待つ
     showScreen('waiting');
     buildWaitingIcons();
-    const t = Date.now();
-    while (bgGenCompleted < bgGenTotal && Date.now() - t < 150000) { // 150秒待機（10枚×12.5秒＋余裕）
-      updateWaitingProgress();
-      await new Promise(r => setTimeout(r, 400));
-    }
+    // タイムアウトなし：全画像完了 or ユーザーがスキップするまで待つ
+    await new Promise(resolve => {
+      window._finaleResolve = resolve;
+      // 完了チェックをポーリング
+      const checkInterval = setInterval(() => {
+        updateWaitingProgress();
+        if (bgGenCompleted >= bgGenTotal) {
+          clearInterval(checkInterval);
+          window._finaleResolve = null;
+          resolve();
+        }
+      }, 400);
+      window._finaleCheckInterval = checkInterval;
+    });
   }
   shootConfetti();
   buildFinaleDots();
@@ -2906,6 +2918,18 @@ async function launchFinale() {
   // 全シーンを見るボタンを表示
   document.getElementById('btn-show-grid').style.display = '';
   showScreen('finale');
+}
+
+function skipWaiting() {
+  // ポーリングを停止してフィナーレへ強制進行
+  if (window._finaleCheckInterval) {
+    clearInterval(window._finaleCheckInterval);
+    window._finaleCheckInterval = null;
+  }
+  if (window._finaleResolve) {
+    window._finaleResolve();
+    window._finaleResolve = null;
+  }
 }
 
 function buildWaitingIcons() {
