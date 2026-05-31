@@ -1956,6 +1956,7 @@ function startGame() {
   state.mainCharacter = pickMainCharacter();
 
   bgGenCompleted = 0; bgGenTotal = 0;
+  imageGenQueue.length = 0; imageGenRunning = false;
   buildTurnDots();
   updateCurrentPlayerBadge();
   showScreen('game');
@@ -2120,6 +2121,7 @@ function clearInput() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
+  imageGenQueue.length = 0; imageGenRunning = false;
   const _tac = document.getElementById('recognized-text');
   _tac.value = ''; _tac.placeholder = 'ここにことばがでるよ 👆'; _tac.readOnly = true;
   const _ebc = document.getElementById('btn-edit-toggle');
@@ -2321,7 +2323,7 @@ async function processTurn(text) {
     ? getSafeImageText()
     : displayText;
   state.lastInputWasFiltered = false;
-  await generateSceneImageBackground(imageText, currentTurnIdx);
+  generateSceneImageBackground(imageText, currentTurnIdx); // キューに追加（非同期）
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2395,22 +2397,44 @@ async function generateAITurn() {
 // ============================================================
 //  IMAGE GENERATION
 // ============================================================
+// ============================================================
+// 画像生成キュー（Tier 1: 直列で1枚ずつ生成・レート制限対応）
+// ============================================================
+const imageGenQueue = [];
+let imageGenRunning = false;
+
 function generateSceneImageBackground(text, turnIdx) {
   if (!state.keys.openai) return;
   bgGenTotal++;
   const bar = document.getElementById('bg-gen-progress');
   if (bar) bar.style.display = 'flex';
   updateBgGenProgress();
-  generateSceneImage(text, turnIdx).then(() => {
+  // キューに追加して順番待ち
+  imageGenQueue.push({ text, turnIdx });
+  if (!imageGenRunning) processImageQueue();
+}
+
+async function processImageQueue() {
+  imageGenRunning = true;
+  while (imageGenQueue.length > 0) {
+    const { text, turnIdx } = imageGenQueue.shift();
+    try {
+      await generateSceneImage(text, turnIdx);
+    } catch(e) {
+      console.warn('Image gen failed for turn', turnIdx, e.message);
+    }
     bgGenCompleted++;
     updateBgGenProgress();
     if (bgGenCompleted >= bgGenTotal) {
-      setTimeout(() => {
-        const b = document.getElementById('bg-gen-progress');
-        if (b) b.style.display = 'none';
-      }, 1500);
+      const b = document.getElementById('bg-gen-progress');
+      if (b) setTimeout(() => b.style.display = 'none', 1500);
     }
-  }).catch(() => { bgGenCompleted++; updateBgGenProgress(); });
+    // Tier 1レート制限対応: 1枚生成後に少し待つ（12秒/枚 = 5枚/分）
+    if (imageGenQueue.length > 0) {
+      await new Promise(r => setTimeout(r, 12500));
+    }
+  }
+  imageGenRunning = false;
 }
 
 function updateBgGenProgress() {
@@ -2619,7 +2643,7 @@ async function launchFinale() {
     showScreen('waiting');
     buildWaitingIcons();
     const t = Date.now();
-    while (bgGenCompleted < bgGenTotal && Date.now() - t < 60000) {
+    while (bgGenCompleted < bgGenTotal && Date.now() - t < 150000) { // 150秒待機（10枚×12.5秒＋余裕）
       updateWaitingProgress();
       await new Promise(r => setTimeout(r, 400));
     }
