@@ -320,14 +320,11 @@ body {
   border: 8px solid #C8860A;
   margin-bottom: 16px;
 }
-/* ゲーム中は非表示・フィナーレで表示 */
 .game-frame-hidden { display: none !important; }
-
-/* バックグラウンド生成進捗バー */
 .bg-gen-progress {
   width: 100%;
   max-width: 640px;
-  background: rgba(255,255,255,0.8);
+  background: rgba(255,255,255,0.85);
   border-radius: 50px;
   padding: 10px 16px;
   margin-bottom: 12px;
@@ -1245,8 +1242,8 @@ body {
   </div>
 
   <div class="game-main">
-    <!-- Kamishibai frame（ゲーム中は非表示・フィナーレで使用） -->
-    <div class="kamishibai-frame game-frame-hidden" id="game-kamishibai-frame">
+    <!-- Kamishibai frame -->
+    <div class="kamishibai-frame">
       <div class="kamishibai-border"></div>
       <div id="scene-placeholder" class="scene-placeholder">
         <div class="ph-icon">🎭</div>
@@ -1259,15 +1256,6 @@ body {
       </div>
     </div>
 
-    <!-- バックグラウンド生成プログレスバー -->
-    <div class="bg-gen-progress" id="bg-gen-progress" style="display:none;">
-      <span>🎨</span>
-      <div class="bg-gen-bar-track">
-        <div class="bg-gen-bar-fill" id="bg-gen-bar"></div>
-      </div>
-      <span id="bg-gen-label">えをかいているよ…</span>
-    </div>
-
     <!-- Art style switcher -->
     <div class="art-style-bar" id="art-style-bar">
       <span class="bar-label">🎨</span>
@@ -1275,6 +1263,15 @@ body {
       <button class="style-chip" onclick="switchArtStyle('anime')" id="chip-anime">✨ アニメ</button>
 
       <button class="style-chip" onclick="switchArtStyle('western')" id="chip-western">🌟 アメコミ</button>
+    </div>
+
+    <!-- バックグラウンド生成プログレスバー -->
+    <div class="bg-gen-progress" id="bg-gen-progress" style="display:none;">
+      <span>🎨</span>
+      <div class="bg-gen-bar-track">
+        <div class="bg-gen-bar-fill" id="bg-gen-bar"></div>
+      </div>
+      <span id="bg-gen-label">えをかいているよ…</span>
     </div>
 
     <!-- Story log -->
@@ -1402,6 +1399,12 @@ body {
 </div>
 
 <script>
+// ============================================================
+//  BACKGROUND IMAGE GENERATION COUNTERS
+// ============================================================
+let bgGenCompleted = 0;
+let bgGenTotal = 0;
+
 // ============================================================
 //  STATE
 // ============================================================
@@ -1782,6 +1785,7 @@ function startGame() {
   // 全シーンで統一するメインキャラクターを1体決定
   state.mainCharacter = pickMainCharacter();
 
+  bgGenCompleted = 0; bgGenTotal = 0;
   buildTurnDots();
   updateCurrentPlayerBadge();
   showScreen('game');
@@ -1938,8 +1942,6 @@ function clearInput() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
-  bgGenCompleted = 0;
-  bgGenTotal = 0;
   document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
   document.getElementById('btn-send').disabled = true;
   document.getElementById('text-input').value = '';
@@ -2094,7 +2096,8 @@ async function processTurn(text) {
   clearInput();
   updateTurnDots();
 
-  // バックグラウンドで画像生成開始（awaitしない）
+  // Generate image
+  // フィルターを通ったターンのインデックスを記録し、contextから除外する
   const currentTurnIdx = state.turns.length - 1;
   if (state.lastInputWasFiltered) {
     state.filteredTurnIndices.push(currentTurnIdx);
@@ -2103,8 +2106,7 @@ async function processTurn(text) {
     ? getSafeImageText()
     : displayText;
   state.lastInputWasFiltered = false;
-  // awaitせずにバックグラウンドで生成（完了したらturnDataに保存）
-  generateSceneImageBackground(imageText, currentTurnIdx);
+  await generateSceneImageBackground(imageText, currentTurnIdx);
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2178,36 +2180,32 @@ async function generateAITurn() {
 // ============================================================
 //  IMAGE GENERATION
 // ============================================================
-// バックグラウンド画像生成（ゲーム中に非同期で実行）
-let bgGenCompleted = 0;
-let bgGenTotal = 0;
-
 function generateSceneImageBackground(text, turnIdx) {
   if (!state.keys.openai) return;
   bgGenTotal++;
+  const bar = document.getElementById('bg-gen-progress');
+  if (bar) bar.style.display = 'flex';
   updateBgGenProgress();
-  // プログレスバーを表示
-  document.getElementById('bg-gen-progress').style.display = 'flex';
-
   generateSceneImage(text, turnIdx).then(() => {
     bgGenCompleted++;
     updateBgGenProgress();
-    // 全部完了したらプログレスバーを非表示
     if (bgGenCompleted >= bgGenTotal) {
       setTimeout(() => {
-        document.getElementById('bg-gen-progress').style.display = 'none';
-      }, 1000);
+        const b = document.getElementById('bg-gen-progress');
+        if (b) b.style.display = 'none';
+      }, 1500);
     }
-  });
+  }).catch(() => { bgGenCompleted++; updateBgGenProgress(); });
 }
 
 function updateBgGenProgress() {
   const pct = bgGenTotal > 0 ? Math.round((bgGenCompleted / bgGenTotal) * 100) : 0;
-  document.getElementById('bg-gen-bar').style.width = pct + '%';
-  document.getElementById('bg-gen-label').textContent =
-    bgGenCompleted >= bgGenTotal
-      ? 'えが できたよ！ 🎉'
-      : `えをかいているよ… ${bgGenCompleted}/${bgGenTotal}`;
+  const bar = document.getElementById('bg-gen-bar');
+  const label = document.getElementById('bg-gen-label');
+  if (bar) bar.style.width = pct + '%';
+  if (label) label.textContent = bgGenCompleted >= bgGenTotal
+    ? 'えができたよ！ 🎉'
+    : 'えをかいているよ… ' + bgGenCompleted + '/' + bgGenTotal;
 }
 
 async function generateSceneImage(text, turnIdx) {
@@ -2277,14 +2275,13 @@ async function generateSceneImage(text, turnIdx) {
 
     if (imgSrc) {
       state.turns[turnIdx].imageUrl = imgSrc;
-      // ゲーム中は表示しない。フィナーレでgotoSlide()が表示する
+      // フィナーレでのみ表示
     } else {
-      console.warn('画像URLなし:', JSON.stringify(imageData).substring(0, 100));
+      showImageError('画像URLなし', JSON.stringify(imageData).substring(0, 100));
     }
   } catch (e) {
     console.error('Image generation error:', e);
-    // バックグラウンドエラーはトーストのみ（画面を止めない）
-    showToast('⚠️ えのせいせいにしっぱいしたよ');
+    console.warn('Image gen error:', e.message); showToast('⚠️ えのせいせいにしっぱいしたよ');
   } finally {
     document.getElementById(overlayId).classList.add('hidden');
   }
@@ -2413,12 +2410,11 @@ function continueStory() {
 //  FINALE
 // ============================================================
 async function launchFinale() {
-  // 全画像生成が完了するまで待つ（最大30秒）
-  if (bgGenCompleted < bgGenTotal) {
+  if (bgGenTotal > 0 && bgGenCompleted < bgGenTotal) {
     showToast('🎨 えをしあげているよ…もうすこし！');
-    const waitStart = Date.now();
-    while (bgGenCompleted < bgGenTotal && Date.now() - waitStart < 30000) {
-      await new Promise(r => setTimeout(r, 500));
+    const t = Date.now();
+    while (bgGenCompleted < bgGenTotal && Date.now() - t < 30000) {
+      await new Promise(r => setTimeout(r, 400));
     }
   }
   shootConfetti();
