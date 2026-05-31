@@ -320,6 +320,39 @@ body {
   border: 8px solid #C8860A;
   margin-bottom: 16px;
 }
+/* ゲーム中は非表示・フィナーレで表示 */
+.game-frame-hidden { display: none !important; }
+
+/* バックグラウンド生成進捗バー */
+.bg-gen-progress {
+  width: 100%;
+  max-width: 640px;
+  background: rgba(255,255,255,0.8);
+  border-radius: 50px;
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--purple);
+  box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+}
+.bg-gen-bar-track {
+  flex: 1;
+  height: 8px;
+  background: #E0E0E0;
+  border-radius: 50px;
+  overflow: hidden;
+}
+.bg-gen-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--purple), var(--sky));
+  border-radius: 50px;
+  transition: width 0.5s ease;
+  width: 0%;
+}
 
 .kamishibai-border {
   position: absolute;
@@ -1212,8 +1245,8 @@ body {
   </div>
 
   <div class="game-main">
-    <!-- Kamishibai frame -->
-    <div class="kamishibai-frame">
+    <!-- Kamishibai frame（ゲーム中は非表示・フィナーレで使用） -->
+    <div class="kamishibai-frame game-frame-hidden" id="game-kamishibai-frame">
       <div class="kamishibai-border"></div>
       <div id="scene-placeholder" class="scene-placeholder">
         <div class="ph-icon">🎭</div>
@@ -1224,6 +1257,15 @@ body {
         <div class="gen-spinner"></div>
         <div class="gen-text" id="gen-text">えをかいています…</div>
       </div>
+    </div>
+
+    <!-- バックグラウンド生成プログレスバー -->
+    <div class="bg-gen-progress" id="bg-gen-progress" style="display:none;">
+      <span>🎨</span>
+      <div class="bg-gen-bar-track">
+        <div class="bg-gen-bar-fill" id="bg-gen-bar"></div>
+      </div>
+      <span id="bg-gen-label">えをかいているよ…</span>
     </div>
 
     <!-- Art style switcher -->
@@ -1896,6 +1938,8 @@ function clearInput() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
+  bgGenCompleted = 0;
+  bgGenTotal = 0;
   document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
   document.getElementById('btn-send').disabled = true;
   document.getElementById('text-input').value = '';
@@ -2050,8 +2094,7 @@ async function processTurn(text) {
   clearInput();
   updateTurnDots();
 
-  // Generate image
-  // フィルターを通ったターンのインデックスを記録し、contextから除外する
+  // バックグラウンドで画像生成開始（awaitしない）
   const currentTurnIdx = state.turns.length - 1;
   if (state.lastInputWasFiltered) {
     state.filteredTurnIndices.push(currentTurnIdx);
@@ -2060,7 +2103,8 @@ async function processTurn(text) {
     ? getSafeImageText()
     : displayText;
   state.lastInputWasFiltered = false;
-  await generateSceneImage(imageText, currentTurnIdx);
+  // awaitせずにバックグラウンドで生成（完了したらturnDataに保存）
+  generateSceneImageBackground(imageText, currentTurnIdx);
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2113,7 +2157,7 @@ async function generateAITurn() {
     updateTurnDots();
 
     // Generate image
-    await generateSceneImage(response, state.turns.length - 1);
+    generateSceneImageBackground(response, state.turns.length - 1);
 
     if (state.totalTurns >= state.maxTurns) {
       setTimeout(() => document.getElementById('continue-popup').classList.remove('hidden'), 1000);
@@ -2134,6 +2178,38 @@ async function generateAITurn() {
 // ============================================================
 //  IMAGE GENERATION
 // ============================================================
+// バックグラウンド画像生成（ゲーム中に非同期で実行）
+let bgGenCompleted = 0;
+let bgGenTotal = 0;
+
+function generateSceneImageBackground(text, turnIdx) {
+  if (!state.keys.openai) return;
+  bgGenTotal++;
+  updateBgGenProgress();
+  // プログレスバーを表示
+  document.getElementById('bg-gen-progress').style.display = 'flex';
+
+  generateSceneImage(text, turnIdx).then(() => {
+    bgGenCompleted++;
+    updateBgGenProgress();
+    // 全部完了したらプログレスバーを非表示
+    if (bgGenCompleted >= bgGenTotal) {
+      setTimeout(() => {
+        document.getElementById('bg-gen-progress').style.display = 'none';
+      }, 1000);
+    }
+  });
+}
+
+function updateBgGenProgress() {
+  const pct = bgGenTotal > 0 ? Math.round((bgGenCompleted / bgGenTotal) * 100) : 0;
+  document.getElementById('bg-gen-bar').style.width = pct + '%';
+  document.getElementById('bg-gen-label').textContent =
+    bgGenCompleted >= bgGenTotal
+      ? 'えが できたよ！ 🎉'
+      : `えをかいているよ… ${bgGenCompleted}/${bgGenTotal}`;
+}
+
 async function generateSceneImage(text, turnIdx) {
   if (!state.keys.openai) return;
 
@@ -2201,13 +2277,14 @@ async function generateSceneImage(text, turnIdx) {
 
     if (imgSrc) {
       state.turns[turnIdx].imageUrl = imgSrc;
-      showSceneImage(imgSrc);
+      // ゲーム中は表示しない。フィナーレでgotoSlide()が表示する
     } else {
-      showImageError('画像URLなし', JSON.stringify(imageData).substring(0, 100));
+      console.warn('画像URLなし:', JSON.stringify(imageData).substring(0, 100));
     }
   } catch (e) {
     console.error('Image generation error:', e);
-    showImageError('通信エラー', e.message || String(e));
+    // バックグラウンドエラーはトーストのみ（画面を止めない）
+    showToast('⚠️ えのせいせいにしっぱいしたよ');
   } finally {
     document.getElementById(overlayId).classList.add('hidden');
   }
@@ -2335,7 +2412,15 @@ function continueStory() {
 // ============================================================
 //  FINALE
 // ============================================================
-function launchFinale() {
+async function launchFinale() {
+  // 全画像生成が完了するまで待つ（最大30秒）
+  if (bgGenCompleted < bgGenTotal) {
+    showToast('🎨 えをしあげているよ…もうすこし！');
+    const waitStart = Date.now();
+    while (bgGenCompleted < bgGenTotal && Date.now() - waitStart < 30000) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
   shootConfetti();
   buildFinaleDots();
   gotoSlide(0);
