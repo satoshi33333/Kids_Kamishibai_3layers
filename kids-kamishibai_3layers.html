@@ -1014,6 +1014,79 @@ body {
 /* Ruby / furigana */
 
 
+/* ===== 年齢スライダー ===== */
+.age-slider-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 8px;
+}
+.age-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.age-num {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1;
+  background: linear-gradient(135deg, var(--pink), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.age-unit {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--purple);
+}
+.age-desc-badge {
+  background: linear-gradient(135deg, #FFF0F8, #F0F0FF);
+  border: 2px solid var(--pink);
+  border-radius: 50px;
+  padding: 6px 16px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--purple);
+  text-align: center;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+}
+.age-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 8px;
+  border-radius: 50px;
+  background: linear-gradient(90deg, var(--pink) var(--pct, 0%), #E0E0E0 var(--pct, 0%));
+  outline: none;
+  cursor: pointer;
+}
+.age-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: white;
+  border: 3px solid var(--pink);
+  box-shadow: 0 2px 8px rgba(255,107,157,0.4);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.age-slider::-webkit-slider-thumb:active { transform: scale(1.2); }
+.age-labels {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 0.75rem;
+  color: #aaa;
+  font-weight: 700;
+  padding: 0 2px;
+}
+
 /* ===== 画像生成待ち画面 ===== */
 #screen-waiting {
   background: linear-gradient(160deg, #1a1a2e 0%, #2d1b69 100%);
@@ -1272,6 +1345,27 @@ body {
           <div class="am-desc">ながくて ふかい ものがたり。かんじも つかって ほんかくてきに そうさく。</div>
         </div>
       </button>
+    </div>
+  </div>
+
+  <!-- 年齢スライダー -->
+  <div class="setup-card" id="age-slider-card" style="border-color:var(--purple);max-width:600px;width:100%;">
+    <h3>🎂 こどもは なんさい？</h3>
+    <div class="age-slider-wrap">
+      <div class="age-display">
+        <span class="age-num" id="age-num">7</span>
+        <span class="age-unit">さい</span>
+      </div>
+      <div class="age-desc-badge" id="age-desc-badge">ぼうけんモードが おすすめ！</div>
+      <input
+        type="range" min="4" max="13" value="7" step="1"
+        class="age-slider" id="age-slider"
+        oninput="onAgeSlider(this.value)"
+        style="--pct: 33%;"
+      />
+      <div class="age-labels">
+        <span>4さい</span><span>6さい</span><span>8さい</span><span>10さい</span><span>13さい</span>
+      </div>
     </div>
   </div>
 
@@ -1608,6 +1702,7 @@ let state = {
   slideInterval: null,
   artStyle: 'mukashi',  // mukashi | anime | western
   ageMode: 'bouken',    // issho | bouken | creator
+  childAge: 7,          // 4〜13（スライダーで設定）
   mainCharacter: null,  // ゲーム開始時に決定・全シーンで統一
   firstTurn: 'ai',      // ai | human
 };
@@ -1817,8 +1912,64 @@ function selectAgeMode(mode) {
   state.ageMode = mode;
   document.querySelectorAll('.age-mode-btn').forEach(b => b.classList.remove('selected'));
   document.getElementById('agemode-' + mode).classList.add('selected');
-  // 全モードで全スタイルを表示
   document.querySelectorAll('.style-btn').forEach(btn => btn.style.display = '');
+  // モードに合わせてスライダーの推奨値を設定
+  const defaultAge = { issho: 5, bouken: 8, creator: 12 }[mode] || 7;
+  const slider = document.getElementById('age-slider');
+  if (slider) { slider.value = defaultAge; onAgeSlider(defaultAge); }
+}
+
+function onAgeSlider(age) {
+  age = parseInt(age);
+  state.childAge = age;
+  const num = document.getElementById('age-num');
+  const badge = document.getElementById('age-desc-badge');
+  const slider = document.getElementById('age-slider');
+  if (num) num.textContent = age;
+
+  // スライダーのグラデーション更新
+  const pct = Math.round((age - 4) / (13 - 4) * 100);
+  if (slider) slider.style.setProperty('--pct', pct + '%');
+
+  // 年齢に合わせてモードを自動切り替え＆バッジ更新
+  const info = getAgeInfo(age);
+  if (badge) badge.textContent = info.badge;
+
+  // モードも年齢に合わせて自動変更
+  if (info.mode !== state.ageMode) {
+    state.ageMode = info.mode;
+    document.querySelectorAll('.age-mode-btn').forEach(b => b.classList.remove('selected'));
+    document.getElementById('agemode-' + info.mode).classList.add('selected');
+  }
+}
+
+function getAgeInfo(age) {
+  if (age <= 4) return { mode:'issho', badge:'😊 みじかくてかんたんなおはなし' };
+  if (age === 5) return { mode:'issho', badge:'🌱 やさしいことばで1ぶんずつ' };
+  if (age === 6) return { mode:'issho', badge:'🌱 すこしながめのおはなしもOK' };
+  if (age === 7) return { mode:'bouken', badge:'🌟 ぼうけんモードがおすすめ！' };
+  if (age === 8) return { mode:'bouken', badge:'🌟 かんじもすこしつかえるよ' };
+  if (age === 9) return { mode:'bouken', badge:'🌟 ふくざつなおはなしもたのしめる' };
+  if (age === 10) return { mode:'bouken', badge:'🌟 もっとふかいものがたりへ' };
+  if (age === 11) return { mode:'creator', badge:'🔥 クリエイターモードへようこそ' };
+  if (age === 12) return { mode:'creator', badge:'🔥 かんじもつかってほんかくそうさく' };
+  return { mode:'creator', badge:'🔥 おとなとほぼおなじふかさで' };
+}
+
+// 年齢別のsystemPromptを動的生成
+function getAgeSystemPrompt() {
+  const age = state.childAge || 7;
+
+  if (age <= 4) return '4歳向け。ルール：①ひらがなのみ②1文・10文字以内③「〜した。」「〜だよ。」のみ④主語は動物名か「きつねくん」など④内容は動物・食べ物・遊びだけ⑤文のみ出力';
+  if (age === 5) return '5歳向け。ルール：①ひらがなのみ②1文・15文字以内③簡単な動作と結果だけ（「〜したら、〜になった。」）④優しく温かい内容⑤文のみ出力';
+  if (age === 6) return '6歳向け。ルール：①ひらがなメイン②1文・20文字以内③少し面白い展開OK（「すると なんと、〜」）④かんたんな感情表現あり⑤文のみ出力';
+  if (age === 7) return '7歳向け。ルール：①ひらがなメイン（簡単な漢字OK）②1〜2文③驚きや変化を入れる④こどもの発言を必ず受けて展開⑤文のみ出力。質問禁止';
+  if (age === 8) return '8歳向け。ルール：①ひらがな・簡単な漢字②1〜2文③感情・変化・面白い展開③直前の発言を必ず受けて物語を動かす⑤文のみ出力。質問禁止';
+  if (age === 9) return '9歳向け。ルール：①自然な文体②1〜2文③伏線・驚きのある展開③直前の発言を受けて物語を深める⑤文のみ出力。質問禁止';
+  if (age === 10) return '10歳向け。ルール：①自然な文体②2文③感情・葛藤・どんでん返し③直前の発言を活かして物語を転換⑤文のみ出力。質問禁止';
+  if (age === 11) return '11歳向け。ルール：①漢字・ひらがな自然に②2文③複雑な感情・伏線③直前の発言を深く受けて物語を展開⑤文のみ出力。質問禁止';
+  if (age === 12) return '12歳向け。ルール：①自然な文体②2〜3文③伏線・どんでん返し・人物の感情③直前の言葉・行動を必ず物語に組み込む⑤文のみ出力。質問禁止';
+  return '13歳向け。ルール：①自然で豊かな文体②2〜3文③深い感情・葛藤・予想外の展開③直前の発言を核として物語を大きく動かす⑤文のみ出力。質問禁止';
 }
 
 // ============================================================
@@ -2366,8 +2517,10 @@ async function generateAITurn() {
     : `${modeLabel} の物語を ${sentenceCount} で始めてください。\nこの「はじまり」をさんこうにアレンジしてください（コピー禁止）:\n「${opening}」`;
 
   try {
-    const modeSys = MODE_SETTINGS[state.ageMode]?.systemPrompt || MODE_SETTINGS.bouken.systemPrompt;
-    const maxTok = state.ageMode === 'creator' ? 300 : 200;
+    // スライダーで設定した年齢に基づくsystemPrompt（モード設定より優先）
+    const modeSys = getAgeSystemPrompt();
+    const age = state.childAge || 7;
+    const maxTok = age >= 11 ? 300 : age >= 7 ? 200 : 150;
     const response = await callAnthropic([{ role: 'user', content: prompt }], modeSys, maxTok);
 
     state.recognizedText = response;
