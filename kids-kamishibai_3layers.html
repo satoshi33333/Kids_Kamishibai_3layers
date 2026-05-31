@@ -1698,6 +1698,7 @@ let state = {
   keys: { anthropic: '', openai: '', google: '' },
   filterSuggestion: '',
   lastInputWasFiltered: false,
+  safetyBlocked: false,
   filteredTurnIndices: [],
   slideInterval: null,
   artStyle: 'mukashi',  // mukashi | anime | western
@@ -1960,7 +1961,7 @@ function getAgeInfo(age) {
 function getAgeSystemPrompt() {
   const age = state.childAge || 7;
   // 全年齢共通：言い直し禁止・必ず新展開を追加するナレーター
-  const base = 'あなたは即興物語ゲームのナレーターです。こどもの発言を受け入れた上で、必ず新しい展開・キャラクター・出来事を加えてストーリーを前に進める。こどもの言葉をそのまま言い直すだけは絶対禁止。文のみ出力（説明・質問・感想は書かない）。';
+  const base = 'あなたは即興物語ゲームのナレーターです。こどもの発言を受け入れた上で、必ず新しい展開・キャラクター・出来事を加えてストーリーを前に進める。こどもの言葉をそのまま言い直すだけは絶対禁止。文のみ出力（説明・質問・感想は書かない）。身体の部位（ちんちん・おちんちん等）は物語に書かない・かわりに「しっぽ」「どんぐり」などに置き換えて使う。';
 
   if (age <= 4) return base + '4歳向け：ひらがなのみ。1文・超短く（15文字以内）。動物が主役。明るく楽しい内容のみ。';
   if (age === 5) return base + '5歳向け：ひらがなのみ。1文（20文字以内）。「すると〜が あらわれた！」「なんと〜に なった！」などの展開パターンを使う。';
@@ -2112,6 +2113,7 @@ function startGame() {
 
   bgGenCompleted = 0; bgGenTotal = 0;
   imageGenQueue.length = 0; imageGenRunning = false;
+  state.safetyBlocked = false;
   buildTurnDots();
   updateCurrentPlayerBadge();
   showScreen('game');
@@ -2596,6 +2598,30 @@ ${context}
 const imageGenQueue = [];
 let imageGenRunning = false;
 
+// 画像生成用テキストから不適切語を安全な言葉に置換
+function sanitizeImageText(text) {
+  const replacements = [
+    ['おちんちん', 'しっぽ'],
+    ['ちんちん',   'しっぽ'],
+    ['まんこ',     'おはな'],
+    ['ちくび',     'ボタン'],
+    ['きんたま',   'どんぐり'],
+    ['おしり',     'しっぽのした'],
+    ['うんこ',     'まるいもの'],
+    ['うんち',     'まるいもの'],
+    ['はだか',     'ふわふわ'],
+    ['せっくす',   'あそぶ'],
+    ['えっち',     'たのしい'],
+    ['ハゲ',       'まるいあたま'],
+    ['はげ',       'まるいあたま'],
+  ];
+  let safe = text;
+  for (const [ng, ok] of replacements) {
+    safe = safe.replaceAll(ng, ok);
+  }
+  return safe;
+}
+
 function generateSceneImageBackground(text, turnIdx) {
   if (!state.keys.openai) return;
   bgGenTotal++;
@@ -2612,7 +2638,7 @@ async function processImageQueue() {
   while (imageGenQueue.length > 0) {
     const { text, turnIdx } = imageGenQueue.shift();
     try {
-      await generateSceneImage(text, turnIdx);
+      await generateSceneImage(sanitizeImageText(text), turnIdx);
     } catch(e) {
       console.warn('Image gen failed for turn', turnIdx, e.message);
     }
@@ -2622,9 +2648,16 @@ async function processImageQueue() {
       const b = document.getElementById('bg-gen-progress');
       if (b) setTimeout(() => b.style.display = 'none', 1500);
     }
-    // Tier 1レート制限対応: 1枚生成後に少し待つ（12秒/枚 = 5枚/分）
     if (imageGenQueue.length > 0) {
-      await new Promise(r => setTimeout(r, 12500));
+      if (state.safetyBlocked) {
+        // 安全システムブロック後は60秒冷却してから再開
+        updateBgGenProgressLabel('⏳ あんぜんシステムが はたらきました。しばらく まってね…');
+        await new Promise(r => setTimeout(r, 60000));
+        state.safetyBlocked = false;
+      } else {
+        // 通常のレート制限対応（12秒/枚）
+        await new Promise(r => setTimeout(r, 12500));
+      }
     }
   }
   imageGenRunning = false;
@@ -2638,6 +2671,11 @@ function updateBgGenProgress() {
   if (label) label.textContent = bgGenCompleted >= bgGenTotal
     ? 'えができたよ！ 🎉'
     : 'えをかいているよ… ' + bgGenCompleted + '/' + bgGenTotal;
+}
+
+function updateBgGenProgressLabel(msg) {
+  const label = document.getElementById('bg-gen-label');
+  if (label) label.textContent = msg;
 }
 
 async function generateSceneImage(text, turnIdx) {
@@ -2681,7 +2719,9 @@ async function generateSceneImage(text, turnIdx) {
 
       // OpenAIの安全システムに引っかかった場合は子供向けメッセージ
       if (errMsg.includes('safety') || errMsg.includes('rejected') || errMsg.includes('content policy')) {
-        showImageError('このえはかけなかったよ 🙈', 'ちがうおはなしで えをかいてみよう！');
+        // 安全システムブロック → フラグを立てて冷却期間を発動
+        state.safetyBlocked = true;
+        showSafetyBlockMessage();
       } else if (res.status === 400) {
         showImageError('えのせいせいにしっぱいしたよ', 'もうすこし かんたんな おはなしに してみよう！');
       } else {
@@ -2718,9 +2758,27 @@ async function generateSceneImage(text, turnIdx) {
 }
 
 function showImageError(title, detail) {
-  // フレーム削除済みのためトーストのみ表示
   showToast(`⚠️ えのせいせい: ${title}`);
   console.warn('Image error:', title, detail);
+}
+
+function showSafetyBlockMessage() {
+  // 保護者向けの説明をトーストで表示
+  const msg = '⚠️【おとなのかたへ】OpenAIの安全システムが作動しました。絵の生成が一時停止します。数分後に再度お試しください。';
+  // 通常より長く表示するため専用トーストを作成
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:#2D2D2D; color:white; padding:14px 20px;
+    border-radius:16px; font-size:0.85rem; font-weight:700;
+    z-index:300; max-width:320px; text-align:center;
+    line-height:1.6; box-shadow:0 4px 20px rgba(0,0,0,0.4);
+    border-left:4px solid #FF9F43;
+  `;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 10000); // 10秒表示
+  console.warn('Safety block:', msg);
 }
 
 // フィルターされた入力の代わりに使う安全な場面描写
