@@ -266,6 +266,8 @@ body {
 #screen-game {
   background: linear-gradient(160deg, #FFF8E8 0%, #F0F8FF 100%);
   padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .game-top {
@@ -304,7 +306,7 @@ body {
   width: 100%;
   padding: 12px 16px 16px;
   flex: 1;
-  overflow-y: auto;          /* 画面全体がはみ出したときスクロール可 */
+  overflow-y: visible;
 }
 
 /* Kamishibai Frame */
@@ -1109,6 +1111,18 @@ body {
   color: white;
   text-shadow: 0 1px 3px black;
 }
+.scene-grid-item .grid-text {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(transparent, rgba(0,0,0,0.85));
+  color: white;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 14px 5px 4px;
+  text-shadow: 0 1px 2px black;
+  word-break: break-all;
+}
 .scene-grid-item .grid-no-img {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
@@ -1419,8 +1433,25 @@ body {
         <span class="btn-label">おしながら はなす</span>
       </button>
 
-      <div class="recognized-text" id="recognized-text">
-        ここにことばがでるよ 👆
+      <!-- 音声認識テキスト + 親が編集できるエリア -->
+      <div style="width:100%;position:relative;">
+        <textarea
+          id="recognized-text"
+          rows="2"
+          readonly
+          placeholder="ここにことばがでるよ 👆"
+          oninput="onRecognizedEdit(this.value)"
+          style="width:100%;background:rgba(255,255,255,0.9);border:3px dashed var(--pink);border-radius:16px;padding:12px 44px 12px 16px;font-size:1.1rem;font-family:inherit;font-weight:700;color:#2D2D2D;min-height:60px;resize:none;outline:none;box-sizing:border-box;word-break:break-all;line-height:1.5;text-align:center;"
+        ></textarea>
+        <button
+          id="btn-edit-toggle"
+          onclick="toggleEditMode()"
+          style="display:none;position:absolute;top:8px;right:8px;width:34px;height:34px;border-radius:50%;border:2px solid var(--purple);background:white;font-size:1rem;cursor:pointer;z-index:2;"
+          title="ことばをなおす"
+        >✏️</button>
+      </div>
+      <div id="edit-hint" style="display:none;font-size:0.75rem;color:var(--purple);font-weight:700;text-align:center;margin-top:-6px;">
+        ✏️ おとなのかた：ことばをなおせます
       </div>
 
       <div class="voice-action-row">
@@ -2012,7 +2043,7 @@ function initSpeechRecognition() {
       transcript += e.results[i][0].transcript;
     }
     state.recognizedText = transcript;
-    document.getElementById('recognized-text').textContent = transcript || '…きいているよ…';
+    const _ta1 = document.getElementById('recognized-text'); _ta1.value = transcript || ''; _ta1.placeholder = transcript ? '' : '…きいているよ…';
     if (e.results[e.results.length - 1].isFinal) {
       document.getElementById('btn-send').disabled = !transcript.trim();
     }
@@ -2027,7 +2058,7 @@ async function startRecording() {
   state.audioChunks = [];
   state.pendingAudioBlob = null;
   state.recognizedText = '';
-  document.getElementById('recognized-text').textContent = '…きいているよ…';
+  const _ta2 = document.getElementById('recognized-text'); _ta2.value = ''; _ta2.placeholder = '…きいているよ…';
   document.getElementById('btn-send').disabled = true;
 
   const btn = document.getElementById('record-btn');
@@ -2067,11 +2098,19 @@ function stopRecording() {
 
   setTimeout(() => {
     const text = state.recognizedText.trim();
+    const ta = document.getElementById('recognized-text');
+    const eb = document.getElementById('btn-edit-toggle');
+    const eh = document.getElementById('edit-hint');
     if (text) {
+      ta.value = text; ta.readOnly = true;
+      ta.style.borderStyle = 'dashed'; ta.style.borderColor = 'var(--pink)'; ta.style.textAlign = 'center';
+      if (eb) eb.style.display = 'flex';
+      if (eh) eh.style.display = 'block';
       document.getElementById('btn-send').disabled = false;
-      document.getElementById('recognized-text').textContent = text;
     } else {
-      document.getElementById('recognized-text').textContent = 'もういちどはなしてね 🎙️';
+      ta.value = ''; ta.placeholder = 'もういちどはなしてね 🎙️';
+      if (eb) eb.style.display = 'none';
+      if (eh) eh.style.display = 'none';
     }
   }, 400);
 }
@@ -2081,9 +2120,46 @@ function clearInput() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
-  document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
+  const _tac = document.getElementById('recognized-text');
+  _tac.value = ''; _tac.placeholder = 'ここにことばがでるよ 👆'; _tac.readOnly = true;
+  const _ebc = document.getElementById('btn-edit-toggle');
+  if (_ebc) { _ebc.style.display = 'none'; _ebc.classList.remove('editing'); }
+  const _ehc = document.getElementById('edit-hint');
+  if (_ehc) _ehc.style.display = 'none';
   document.getElementById('btn-send').disabled = true;
   document.getElementById('text-input').value = '';
+}
+
+function toggleEditMode() {
+  const ta = document.getElementById('recognized-text');
+  const btn = document.getElementById('btn-edit-toggle');
+  if (!ta) return;
+  if (ta.readOnly) {
+    // 編集開始
+    ta.readOnly = false;
+    ta.style.borderStyle = 'solid';
+    ta.style.borderColor = 'var(--purple)';
+    ta.style.textAlign = 'left';
+    ta.style.background = 'white';
+    if (btn) { btn.textContent = '✓'; btn.style.background = 'var(--purple)'; btn.style.color = 'white'; }
+    ta.focus();
+    ta.selectionStart = ta.value.length;
+  } else {
+    // 編集確定
+    ta.readOnly = true;
+    ta.style.borderStyle = 'dashed';
+    ta.style.borderColor = 'var(--pink)';
+    ta.style.textAlign = 'center';
+    ta.style.background = 'rgba(255,255,255,0.9)';
+    if (btn) { btn.textContent = '✏️'; btn.style.background = 'white'; btn.style.color = ''; }
+    state.recognizedText = ta.value.trim();
+    document.getElementById('btn-send').disabled = !ta.value.trim();
+  }
+}
+
+function onRecognizedEdit(val) {
+  state.recognizedText = val.trim();
+  document.getElementById('btn-send').disabled = !val.trim();
 }
 
 function toggleTextInput() {
@@ -2591,10 +2667,12 @@ function buildSceneGrid() {
     const item = document.createElement('div');
     item.className = 'scene-grid-item';
     item.onclick = () => { showSlideshow(); gotoSlide(i); };
+    const shortText = turn.text.length > 30 ? turn.text.substring(0, 30) + '…' : turn.text;
     item.innerHTML = '<span class="grid-num">' + (i + 1) + '</span>' +
       (turn.imageUrl
         ? '<img src="' + turn.imageUrl + '" alt="シーン' + (i+1) + '">'
-        : '<div class="grid-no-img">🎭</div>');
+        : '<div class="grid-no-img">🎭</div>') +
+      '<div class="grid-text">' + shortText + '</div>';
     grid.appendChild(item);
   });
 }
@@ -2802,7 +2880,7 @@ function resetGame() {
   state.lastInputWasFiltered = false;
   document.getElementById('story-log').innerHTML = '';
   // scene-image/placeholder removed from game screen
-  document.getElementById('recognized-text').textContent = 'ここにことばがでるよ 👆';
+  const _tar = document.getElementById('recognized-text'); if(_tar){_tar.value='';_tar.placeholder='ここにことばがでるよ 👆';_tar.readOnly=true;}
   document.getElementById('btn-send').disabled = true;
   showScreen('title');
 }
