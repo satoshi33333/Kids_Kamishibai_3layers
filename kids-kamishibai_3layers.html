@@ -2347,18 +2347,20 @@ function submitFromText() {
 let filterCallback = null;
 
 const SIMPLE_FILTER_WORDS = [
-  // ひらがな・悪口
-  'ばか','うんち','うんこ','きもい','しね','ころす','きらい','くそ','ちくしょう','あほ',
+  // 悪口・暴言
+  'ばか','きもい','しね','ころす','きらい','くそ','ちくしょう','あほ',
   'むかつく','うざい','きえろ','いじめ',
-  // 身体部位・性的な言葉（やさしく言い換える）
-  'おちんちん','ちんちん','おしり','まんこ','ちくび','きんたま','せっくす','えっち',
+  // 性的な言葉（うんち・うんこ・おしりは子供の日常語なので除外）
+  'おちんちん','ちんちん','まんこ','ちくび','きんたま','せっくす','えっち',
   'はだか','ぬーど','せいき','いんぽ',
-  // 漢字・暴力・死関連
+  // 暴力・死関連
   '死','殺','血','暴力','地獄','自殺','殴','刺',
   '出血','墓','死亡','死体','遺体','銃','刀','ナイフ'
 ];
 
 async function checkAndFilter(text) {
+  // ローカル辞書のみでチェック（AI 2次チェックは廃止）
+  // 理由：Claude APIは子供の日常語（うんち等）を過剰にフィルターするため
   const hasLocal = SIMPLE_FILTER_WORDS.some(w => text.includes(w));
 
   if (hasLocal) {
@@ -2369,24 +2371,6 @@ async function checkAndFilter(text) {
       } catch(e) {}
     }
     return { needsFilter: true, suggestion: 'もっとやさしいことばにしようね！' };
-  }
-
-  // ローカル辞書になくてもAnthropicがあればAIでもチェック（暴力・死・恐怖的表現を検出）
-  if (state.keys.anthropic) {
-    try {
-      const aiCheck = await callAnthropic([{
-        role: 'user',
-        content: `4〜8歳の子供向けゲームで不適切か判定してください。
-不適切な例：死・血・暴力・恐怖・差別・悪口・自殺など。
-テキスト:「${text}」
-不適切なら "NG:言い換え文" の形式で。問題なければ "OK" のみ。`
-      }], '判定結果のみ出力する。', 80);
-
-      if (aiCheck.startsWith('NG:')) {
-        const suggestion = aiCheck.replace(/^NG:/, '').trim();
-        return { needsFilter: true, suggestion: suggestion || 'やさしいことばにしようね！' };
-      }
-    } catch(e) {}
   }
 
   return { needsFilter: false };
@@ -2409,7 +2393,7 @@ function showFilterPopup(text, suggestion, callback) {
     mascots[Math.floor(Math.random() * mascots.length)];
   // メッセージは固定の子供向け文言（入力テキストは出さない）
   // 身体部位系かどうかで表示メッセージを変える
-  const bodyWords = ['おちんちん','ちんちん','おしり','まんこ','ちくび','きんたま'];
+  const bodyWords = ['おちんちん','ちんちん','まんこ','ちくび','きんたま'];
   const isBodyWord = bodyWords.some(w => (state.recognizedText||'').includes(w));
   document.getElementById('filter-message').innerHTML = isBodyWord
     ? 'そのことばは おはなしの なかでは<br>つかわないことばだよ。<br>こんなことばは どうかな？ 👇'
