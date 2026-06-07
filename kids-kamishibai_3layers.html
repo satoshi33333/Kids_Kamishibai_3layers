@@ -1500,6 +1500,15 @@ body {
       <label>Google TTS API</label>
       <input type="password" id="api-google" placeholder="AIza..." />
     </div>
+    <!-- 保存オプション -->
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.55);border-radius:14px;border:1px solid rgba(0,0,0,0.08);">
+      <input type="checkbox" id="save-keys-check" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;" />
+      <div style="flex:1;">
+        <div style="font-size:0.88rem;font-weight:700;color:#444;">このブラウザに保存する</div>
+        <div style="font-size:0.75rem;color:#888;margin-top:2px;">次回から入力不要。このデバイス内にのみ保存されます。</div>
+      </div>
+      <button onclick="clearSavedKeys()" id="btn-clear-keys" style="display:none;background:transparent;border:1px solid #ffaaaa;color:#cc4444;border-radius:8px;padding:5px 10px;font-size:0.75rem;font-family:inherit;cursor:pointer;white-space:nowrap;">🗑 削除</button>
+    </div>
   </div>
 
   <button class="btn-go" onclick="startGame()">
@@ -2129,6 +2138,17 @@ function startGame() {
   state.keys.openai = document.getElementById('api-openai').value.trim();
   state.keys.google = document.getElementById('api-google').value.trim();
 
+  // チェックボックスが入っていたらlocalStorageに保存
+  if (document.getElementById('save-keys-check')?.checked) {
+    try {
+      localStorage.setItem('ehon_keys', JSON.stringify({
+        anthropic: state.keys.anthropic,
+        openai: state.keys.openai,
+        google: state.keys.google,
+      }));
+    } catch(e) {}
+  }
+
   // Build players array
   state.players = [];
   document.querySelectorAll('#player-names-container input').forEach(inp => {
@@ -2385,6 +2405,19 @@ function toggleEditMode() { onRecognizedFocus(); }
 function onRecognizedEdit(val) {
   state.recognizedText = val.trim();
   document.getElementById('btn-send').disabled = !val.trim();
+}
+
+function clearSavedKeys() {
+  try { localStorage.removeItem('ehon_keys'); } catch(e) {}
+  ['api-anthropic','api-openai','api-google'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  const chk = document.getElementById('save-keys-check');
+  if (chk) chk.checked = false;
+  const btn = document.getElementById('btn-clear-keys');
+  if (btn) btn.style.display = 'none';
+  showToast('🗑 保存したAPIキーを削除しました');
 }
 
 function toggleTextInput() {
@@ -3455,6 +3488,24 @@ function shootConfetti() {
   }
   setTimeout(() => wrapper.innerHTML = '', 4000);
 }
+// ============================================================
+//  AUTO-LOAD SAVED API KEYS
+// ============================================================
+(function() {
+  try {
+    const saved = localStorage.getItem('ehon_keys');
+    if (!saved) return;
+    const keys = JSON.parse(saved);
+    const fill = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
+    fill('api-anthropic', keys.anthropic);
+    fill('api-openai', keys.openai);
+    fill('api-google', keys.google);
+    const chk = document.getElementById('save-keys-check');
+    if (chk) chk.checked = true;
+    const btn = document.getElementById('btn-clear-keys');
+    if (btn) btn.style.display = 'block';
+  } catch(e) {}
+})();
 </script>
 </body>
 </html>
