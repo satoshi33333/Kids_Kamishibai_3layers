@@ -2,6 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>えほんのじかん 🌈 かみしばいゲーム</title>
 <style>
@@ -1685,16 +1686,24 @@ body {
   <!-- 全シーングリッドビュー -->
   <div class="grid-view" id="grid-view">
     <div class="scene-grid" id="scene-grid"></div>
-    <button class="btn-back-slideshow" onclick="showSlideshow()">
-      ◀ スライドショーにもどる
-    </button>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+      <button class="btn-back-slideshow" onclick="showSlideshow()">
+        ◀ スライドショーにもどる
+      </button>
+      <button onclick="savePDF()" style="background:linear-gradient(135deg,#FF9F43,#FF6B9D);color:white;border:none;border-radius:50px;padding:14px 28px;font-family:inherit;font-size:1rem;font-weight:800;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,0.2);">
+        📄 PDFで保存
+      </button>
+    </div>
   </div>
 
   <!-- 通常ボタン -->
   <div id="finale-normal-btns">
-    <div class="finale-controls" style="margin-bottom:10px;">
+    <div class="finale-controls" style="margin-bottom:10px;display:flex;flex-direction:column;gap:8px;align-items:center;">
       <button class="btn-show-grid" id="btn-show-grid" onclick="showGridView()" style="display:none;">
         🖼 ぜんぶのえをみる
+      </button>
+      <button id="btn-save-pdf" onclick="savePDF()" style="display:none;background:linear-gradient(135deg,#FF9F43,#FF6B9D);color:white;border:none;border-radius:50px;padding:12px 28px;font-family:inherit;font-size:1rem;font-weight:800;cursor:pointer;box-shadow:0 4px 0 rgba(0,0,0,0.2);">
+        📄 えほんをPDFで保存
       </button>
     </div>
     <button class="btn-again" onclick="resetGame()">
@@ -3026,6 +3035,7 @@ async function launchFinale() {
   gotoSlide(0);
   // 全シーンを見るボタンを表示
   document.getElementById('btn-show-grid').style.display = '';
+  document.getElementById('btn-save-pdf').style.display = '';
   showScreen('finale');
 }
 
@@ -3436,6 +3446,166 @@ async function callAnthropic(messages, systemPrompt, maxTokens = 500) {
 // ============================================================
 //  RESET
 // ============================================================
+// ============================================================
+//  PDF生成
+// ============================================================
+async function savePDF() {
+  const btn = document.getElementById('btn-save-pdf');
+  const gridPdfBtn = document.querySelector('#grid-view button[onclick*="savePDF"]');
+  if (btn) { btn.textContent = '⏳ PDFをつくっています…'; btn.disabled = true; }
+  if (gridPdfBtn) { gridPdfBtn.textContent = '⏳ つくっています…'; gridPdfBtn.disabled = true; }
+
+  try {
+    const { jsPDF } = window.jspdf;
+
+    // A4横向き（絵本らしく）
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const PW = 297, PH = 210; // A4横 mm
+
+    // ===== 表紙 =====
+    pdf.setFillColor(26, 26, 46);
+    pdf.rect(0, 0, PW, PH, 'F');
+
+    // グラデーション風の装飾
+    pdf.setFillColor(45, 27, 105);
+    pdf.ellipse(PW * 0.8, PH * 0.2, 80, 60, 'F');
+    pdf.setFillColor(20, 20, 40);
+    pdf.ellipse(PW * 0.2, PH * 0.8, 60, 50, 'F');
+
+    // タイトル
+    pdf.setTextColor(255, 217, 61);
+    pdf.setFontSize(28);
+    pdf.text('えほんのじかん', PW / 2, PH / 2 - 20, { align: 'center' });
+
+    pdf.setTextColor(255, 255, 255);
+    pdf.setFontSize(13);
+    pdf.text('みんなでつくったかみしばい', PW / 2, PH / 2 + 2, { align: 'center' });
+
+    // 日付
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日`;
+    pdf.setFontSize(10);
+    pdf.setTextColor(180, 180, 200);
+    pdf.text(dateStr, PW / 2, PH / 2 + 18, { align: 'center' });
+
+    // 参加者名（プレイヤー名）
+    const playerNames = state.players
+      .filter(p => p.role !== 'ai')
+      .map(p => p.name)
+      .join('・');
+    if (playerNames) {
+      pdf.setFontSize(11);
+      pdf.setTextColor(200, 200, 220);
+      pdf.text(playerNames, PW / 2, PH / 2 + 30, { align: 'center' });
+    }
+
+    // ===== 各シーン（1シーン1ページ） =====
+    for (let i = 0; i < state.turns.length; i++) {
+      const turn = state.turns[i];
+      pdf.addPage();
+
+      // 背景
+      pdf.setFillColor(26, 26, 46);
+      pdf.rect(0, 0, PW, PH, 'F');
+
+      // ページ番号バッジ
+      pdf.setFillColor(200, 134, 10);
+      pdf.circle(16, 14, 7, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(9);
+      pdf.text(String(i + 1), 16, 16.5, { align: 'center' });
+
+      // 絵（左側 2/3）
+      const imgX = 8, imgY = 8, imgW = 180, imgH = PH - 16;
+
+      if (turn.imageUrl) {
+        try {
+          // base64かURLかで分岐
+          const imgData = turn.imageUrl.startsWith('data:')
+            ? turn.imageUrl
+            : await fetchImageAsBase64(turn.imageUrl);
+
+          pdf.setDrawColor(200, 134, 10);
+          pdf.setLineWidth(1.2);
+          pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'S');
+          pdf.addImage(imgData, 'PNG', imgX + 1, imgY + 1, imgW - 2, imgH - 2, '', 'FAST');
+        } catch(e) {
+          // 絵なしの場合はプレースホルダー
+          pdf.setFillColor(40, 40, 70);
+          pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'F');
+          pdf.setTextColor(100, 100, 150);
+          pdf.setFontSize(30);
+          pdf.text('🎭', imgX + imgW / 2, imgY + imgH / 2 + 5, { align: 'center' });
+        }
+      } else {
+        pdf.setFillColor(40, 40, 70);
+        pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'F');
+        pdf.setTextColor(100, 100, 150);
+        pdf.setFontSize(12);
+        pdf.text('（えなし）', imgX + imgW / 2, imgY + imgH / 2, { align: 'center' });
+      }
+
+      // テキストエリア（右側 1/3）
+      const txtX = imgX + imgW + 6, txtW = PW - txtX - 8;
+      const txtY = 20;
+
+      // 話者バッジ
+      const player = state.players[turn.playerIdx];
+      const isAI = player?.role === 'ai';
+      if (isAI) {
+        pdf.setFillColor(74, 122, 155);
+      } else {
+        pdf.setFillColor(201, 168, 76);
+      }
+      pdf.roundedRect(txtX, txtY - 6, txtW, 10, 3, 3, 'F');
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text(isAI ? '✨ AIおはなし' : (player?.name || 'こども'), txtX + txtW / 2, txtY + 0.5, { align: 'center' });
+
+      // テキスト本文（折り返し）
+      pdf.setTextColor(235, 235, 255);
+      pdf.setFontSize(13);
+      const lines = pdf.splitTextToSize(turn.text || '', txtW - 4);
+      pdf.text(lines, txtX + 2, txtY + 16, { lineHeightFactor: 1.6 });
+    }
+
+    // ===== 奥付ページ =====
+    pdf.addPage();
+    pdf.setFillColor(26, 26, 46);
+    pdf.rect(0, 0, PW, PH, 'F');
+    pdf.setTextColor(200, 200, 220);
+    pdf.setFontSize(12);
+    pdf.text('🦊 えほんのじかん — FOR ME NY', PW / 2, PH / 2 - 10, { align: 'center' });
+    pdf.setFontSize(9);
+    pdf.setTextColor(130, 130, 160);
+    pdf.text('このかみしばいは AIといっしょに そっきょうでつくりました', PW / 2, PH / 2 + 5, { align: 'center' });
+    pdf.text(dateStr, PW / 2, PH / 2 + 16, { align: 'center' });
+
+    // 保存
+    const filename = `えほんのじかん_${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}.pdf`;
+    pdf.save(filename);
+
+  } catch(err) {
+    console.error('PDF error:', err);
+    showToast('⚠️ PDFの作成に失敗しました: ' + err.message);
+  } finally {
+    if (btn) { btn.textContent = '📄 えほんをPDFで保存'; btn.disabled = false; }
+    if (gridPdfBtn) { gridPdfBtn.textContent = '📄 PDFで保存'; gridPdfBtn.disabled = false; }
+  }
+}
+
+// 外部URLの画像をbase64に変換
+async function fetchImageAsBase64(url) {
+  const resp = await fetch(url);
+  const blob = await resp.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
+
 function resetGame() {
   isPlaying = false;
   stopBgm();
