@@ -2198,6 +2198,7 @@ function startGame() {
 
   bgGenCompleted = 0; bgGenTotal = 0;
   imageGenQueue.length = 0; imageGenRunning = false;
+  failedTurnIndices = [];
   state.safetyBlocked = false;
   buildTurnDots();
   updateCurrentPlayerBadge();
@@ -2720,6 +2721,9 @@ function sanitizeImageText(text) {
   return safe;
 }
 
+const MAX_IMAGE_RETRIES = 2; // 失敗時に自動で最大2回まで再試行（合計3回トライ）
+let failedTurnIndices = []; // リトライしても最終的に失敗したターン（参考用）
+
 function generateSceneImageBackground(text, turnIdx) {
   if (!state.keys.openai) return;
   bgGenTotal++;
@@ -2727,22 +2731,58 @@ function generateSceneImageBackground(text, turnIdx) {
   if (bar) bar.style.display = 'flex';
   updateBgGenProgress();
   // キューに追加して順番待ち
-  imageGenQueue.push({ text, turnIdx });
+  imageGenQueue.push({ text, turnIdx, retryCount: 0 });
   if (!imageGenRunning) processImageQueue();
 }
 
 async function processImageQueue() {
   imageGenRunning = true;
   while (imageGenQueue.length > 0) {
-    const { text, turnIdx } = imageGenQueue.shift();
+    const item = imageGenQueue.shift();
+    const { text, turnIdx } = item;
+    const retryCount = item.retryCount || 0;
     const currentNum = bgGenCompleted + 1;
+
     // 生成開始を通知
     updateWaitingStatus('generating', { current: currentNum, total: bgGenTotal });
+
+    let success = false;
     try {
-      await generateSceneImage(sanitizeImageText(text), turnIdx);
+      success = await generateSceneImage(sanitizeImageText(text), turnIdx);
     } catch(e) {
-      console.warn('Image gen failed for turn', turnIdx, e.message);
+      console.warn('Image gen exception for turn', turnIdx, e.message);
       updateWaitingStatus('error_network', { msg: e.message?.substring(0, 40) || 'unknown' });
+      success = false;
+    }
+
+    if (!success && state.safetyBlocked) {
+      // 安全システムブロック：60秒待ってから自動で再試行（リトライ上限の対象にする）
+      updateBgGenProgressLabel('⏳ あんぜんシステムが はたらきました。しばらく まってね…');
+      let sec = 60;
+      while (sec > 0 && state.safetyBlocked) {
+        updateWaitingStatus('safety_cooldown', { sec });
+        await new Promise(r => setTimeout(r, 1000));
+        sec--;
+      }
+      state.safetyBlocked = false;
+      if (retryCount < MAX_IMAGE_RETRIES) {
+        imageGenQueue.push({ text, turnIdx, retryCount: retryCount + 1 });
+        continue; // bgGenCompletedは増やさず次のキュー項目へ
+      }
+      // リトライ上限到達 → このまま下に進んで失敗確定
+    } else if (!success && retryCount < MAX_IMAGE_RETRIES) {
+      // 通常の失敗（通信エラー・一時的なAPIエラーなど）→ 自動リトライ
+      const nextRetry = retryCount + 1;
+      updateWaitingStatus('retrying', { turn: turnIdx + 1, attempt: nextRetry, max: MAX_IMAGE_RETRIES + 1 });
+      imageGenQueue.push({ text, turnIdx, retryCount: nextRetry });
+      await new Promise(r => setTimeout(r, 2500));
+      continue; // bgGenCompletedは増やさず次のキュー項目へ
+    }
+
+    // 成功 or リトライ上限到達（確定）
+    if (!success) {
+      failedTurnIndices.push(turnIdx);
+      showToast(`⚠️ ${turnIdx + 1}ばんめの えが つくれませんでした`);
     }
     bgGenCompleted++;
     updateBgGenProgress();
@@ -2754,24 +2794,12 @@ async function processImageQueue() {
       updateWaitingStatus('partial_done', { done: bgGenCompleted, total: bgGenTotal });
     }
     if (imageGenQueue.length > 0) {
-      if (state.safetyBlocked) {
-        // 安全システムブロック後は60秒カウントダウン
-        updateBgGenProgressLabel('⏳ あんぜんシステムが はたらきました。しばらく まってね…');
-        let sec = 60;
-        while (sec > 0 && state.safetyBlocked) {
-          updateWaitingStatus('safety_cooldown', { sec });
-          await new Promise(r => setTimeout(r, 1000));
-          sec--;
-        }
-        state.safetyBlocked = false;
-      } else {
-        // レート制限対応の待機（カウントダウン表示）
-        let sec = 3;
-        while (sec > 0) {
-          updateWaitingStatus('waiting_rate', { sec, current: bgGenCompleted + 1, total: bgGenTotal });
-          await new Promise(r => setTimeout(r, 1000));
-          sec--;
-        }
+      // レート制限対応の待機（カウントダウン表示）
+      let sec = 3;
+      while (sec > 0) {
+        updateWaitingStatus('waiting_rate', { sec, current: bgGenCompleted + 1, total: bgGenTotal });
+        await new Promise(r => setTimeout(r, 1000));
+        sec--;
       }
     }
   }
@@ -2794,7 +2822,7 @@ function updateBgGenProgressLabel(msg) {
 }
 
 async function generateSceneImage(text, turnIdx) {
-  if (!state.keys.openai) return;
+  if (!state.keys.openai) return false;
 
   // (gen-overlay removed)
 
@@ -2854,7 +2882,7 @@ async function generateSceneImage(text, turnIdx) {
       } else {
         showImageError(`エラー ${res.status}`, errMsg.substring(0, 80));
       }
-      return;
+      return false;
     }
 
     const data = await res.json();
@@ -2862,7 +2890,7 @@ async function generateSceneImage(text, turnIdx) {
     if (!imageData) {
       console.warn('No image data in response:', data);
       showImageError('データなし', JSON.stringify(data).substring(0, 100));
-      return;
+      return false;
     }
 
     // gpt-image-1 returns b64_json (not url)
@@ -2873,12 +2901,15 @@ async function generateSceneImage(text, turnIdx) {
     if (imgSrc) {
       state.turns[turnIdx].imageUrl = imgSrc;
       // フィナーレでのみ表示
+      return true;
     } else {
       showImageError('画像URLなし', JSON.stringify(imageData).substring(0, 100));
+      return false;
     }
   } catch (e) {
     console.error('Image generation error:', e);
-    console.warn('Image gen error:', e.message); showToast('⚠️ えのせいせいにしっぱいしたよ');
+    console.warn('Image gen error:', e.message);
+    return false;
   } finally {
     // (gen-overlay removed)
   }
@@ -3074,6 +3105,7 @@ function updateWaitingStatus(type, extra) {
     error_network: () => `⚠️ 通信エラーが発生しました（${extra.msg}）<br>次の枚数の生成を試みています…`,
     error_auth:    () => `🔑 APIキーが無効または残高不足です<br>OpenAIのダッシュボードをご確認ください`,
     error_org_verify: () => `🔒 OpenAIの組織認証が未完了です<br>platform.openai.com/settings/organization/general<br>で認証してください`,
+    retrying:      () => `🔄 第 ${extra.turn} 枚目の生成に失敗したため、やりなおしています…<br><span style="font-size:0.78rem;color:rgba(255,255,255,0.7);font-weight:400;">（${extra.attempt} / ${extra.max} 回目）</span>`,
     done:          () => `✅ 全部の絵ができました！`,
     partial_done:  () => `第 ${extra.done} 枚完了 / ${extra.total} 枚中<br><span style="font-size:0.78rem;color:rgba(255,255,255,0.7);">残りを生成中…</span>`,
   };
@@ -3502,6 +3534,9 @@ function makeTextImage(text, opts = {}) {
   const mctx = measureCanvas.getContext('2d');
   mctx.font = `${weight} ${fontSizePx}px ${JP_FONT}`;
 
+  // 行頭に置いてはいけない文字（禁則処理：句読点・閉じ括弧など）
+  const NO_LINE_START = new Set('。、，．・！？」』）】｠〉》ゝゞ々ーぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ%　 '.split(''));
+
   let lines = [];
   const rawLines = String(text || '').split('\n');
   for (const rawLine of rawLines) {
@@ -3510,6 +3545,12 @@ function makeTextImage(text, opts = {}) {
     for (const ch of rawLine) {
       const test = cur + ch;
       if (mctx.measureText(test).width > maxWidthPx && cur.length > 0) {
+        // 禁則処理：次の行の先頭になる文字が禁止文字なら、
+        // 改行せずにこの1文字を前の行にくっつける（はみ出しを許容）
+        if (NO_LINE_START.has(ch)) {
+          cur = test;
+          continue;
+        }
         lines.push(cur);
         cur = ch;
       } else {
@@ -3618,8 +3659,14 @@ async function savePDF() {
         fontSizePt: 11, color: '#ffffff', weight: '800', align: 'center',
       });
 
-      // 絵（左側）
+      // 絵（左側）— gpt-image-2の生成サイズ(1536x1024 = 3:2)に合わせて
+      // アスペクト比を保ったまま枠の中に収める（引き伸ばし・縦長ゆがみを防止）
       const imgX = 8, imgY = 8, imgW = 180, imgH = PH - 16;
+      const IMG_ASPECT = 1536 / 1024; // 1.5（横:縦 = 3:2）
+      let drawW = imgW, drawH = imgW / IMG_ASPECT;
+      if (drawH > imgH) { drawH = imgH; drawW = imgH * IMG_ASPECT; }
+      const drawX = imgX + (imgW - drawW) / 2;
+      const drawY = imgY + (imgH - drawH) / 2;
 
       if (turn.imageUrl) {
         try {
@@ -3629,19 +3676,19 @@ async function savePDF() {
 
           pdf.setDrawColor(200, 134, 10);
           pdf.setLineWidth(1.2);
-          pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'S');
-          pdf.addImage(imgData, 'PNG', imgX + 1, imgY + 1, imgW - 2, imgH - 2, '', 'FAST');
+          pdf.roundedRect(drawX, drawY, drawW, drawH, 4, 4, 'S');
+          pdf.addImage(imgData, 'PNG', drawX + 1, drawY + 1, drawW - 2, drawH - 2, '', 'FAST');
         } catch(e) {
           pdf.setFillColor(40, 40, 70);
-          pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'F');
-          addJapaneseText(pdf, '🎭', imgX + imgW / 2, imgY + imgH / 2 - 8, {
+          pdf.roundedRect(drawX, drawY, drawW, drawH, 4, 4, 'F');
+          addJapaneseText(pdf, '🎭', drawX + drawW / 2, drawY + drawH / 2 - 8, {
             fontSizePt: 30, color: '#646496', align: 'center',
           });
         }
       } else {
         pdf.setFillColor(40, 40, 70);
-        pdf.roundedRect(imgX, imgY, imgW, imgH, 4, 4, 'F');
-        addJapaneseText(pdf, '（えなし）', imgX + imgW / 2, imgY + imgH / 2 - 3, {
+        pdf.roundedRect(drawX, drawY, drawW, drawH, 4, 4, 'F');
+        addJapaneseText(pdf, '（えなし）', drawX + drawW / 2, drawY + drawH / 2 - 3, {
           fontSizePt: 12, color: '#646496', align: 'center',
         });
       }
@@ -3703,6 +3750,10 @@ function resetGame() {
   state.pendingAudioBlob = null;
   state.filteredTurnIndices = [];
   state.lastInputWasFiltered = false;
+  bgGenCompleted = 0; bgGenTotal = 0;
+  imageGenQueue.length = 0; imageGenRunning = false;
+  failedTurnIndices = [];
+  state.safetyBlocked = false;
   document.getElementById('story-log').innerHTML = '';
   // scene-image/placeholder removed from game screen
   const _tar = document.getElementById('recognized-text'); if(_tar){_tar.value='';_tar.placeholder='ここにことばがでるよ 👆';_tar.readOnly=true;}
