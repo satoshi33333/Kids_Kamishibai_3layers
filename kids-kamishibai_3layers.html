@@ -2814,11 +2814,11 @@ async function generateSceneImage(text, turnIdx) {
         'Authorization': `Bearer ${state.keys.openai}`,
       },
       body: JSON.stringify({
-        model: 'gpt-image-1',
+        model: 'gpt-image-2',
         prompt: imagePrompt,
         n: 1,
-        size: '1536x1024',   // gpt-image-1 valid: 1024x1024 | 1536x1024 | 1024x1536
-        quality: 'medium',   // gpt-image-1 valid: low | medium | high
+        size: '1536x1024',   // gpt-image-2: 16px倍数・最大3840px・縦横比3:1以内であればOK
+        quality: 'medium',   // gpt-image-2 valid: low | medium | high | auto
       }),
     });
 
@@ -2826,14 +2826,16 @@ async function generateSceneImage(text, turnIdx) {
       let errBody = '';
       try { errBody = await res.text(); } catch(_) {}
       let errMsg = '';
+      let errCode = '';
       try {
         const errJson = JSON.parse(errBody);
         errMsg = errJson?.error?.message || errBody;
+        errCode = errJson?.error?.code || '';
       } catch(_) { errMsg = errBody; }
-      console.error('Image API error', res.status, errMsg);
+      console.error('Image API error', res.status, errCode, errMsg);
 
-      // OpenAIの安全システムに引っかかった場合は子供向けメッセージ
-      if (errMsg.includes('safety') || errMsg.includes('rejected') || errMsg.includes('content policy')) {
+      // gpt-image-2の構造化エラー（moderation_blocked）または旧形式の文字列判定
+      if (errCode === 'moderation_blocked' || errMsg.includes('safety') || errMsg.includes('rejected') || errMsg.includes('content policy')) {
         // 安全システムブロック → フラグを立てて冷却期間を発動
         state.safetyBlocked = true;
         showSafetyBlockMessage();
@@ -2842,6 +2844,10 @@ async function generateSceneImage(text, turnIdx) {
       } else if (res.status === 401 || errMsg.includes('invalid_api_key') || errMsg.includes('Incorrect API key')) {
         updateWaitingStatus('error_auth', {});
         showSafetyBlockMessage();
+      } else if (res.status === 403 || errMsg.includes('must be verified') || errMsg.includes('Organization')) {
+        // 組織未認証エラー（gpt-image-2も同様に組織認証が必要）
+        updateWaitingStatus('error_org_verify', {});
+        showOrgVerifyMessage();
       } else if (res.status === 429 || errMsg.includes('rate_limit') || errMsg.includes('quota')) {
         updateWaitingStatus('error_auth', { msg: 'APIの残高不足またはレート制限超過' });
         showImageError('残高不足 / レート超過', errMsg.substring(0, 60));
@@ -2900,6 +2906,24 @@ function showSafetyBlockMessage() {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 10000); // 10秒表示
   console.warn('Safety block:', msg);
+}
+
+function showOrgVerifyMessage() {
+  // gpt-image-2利用には組織認証が必要 → 認証されていないと403で全画像が失敗する
+  const msg = '🔒【おとなのかたへ】OpenAIの「組織認証」が完了していません。画像生成には認証が必須です。platform.openai.com/settings/organization/general で認証してください（反映に数分〜15分かかります）。';
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:#2D2D2D; color:white; padding:14px 20px;
+    border-radius:16px; font-size:0.85rem; font-weight:700;
+    z-index:300; max-width:340px; text-align:center;
+    line-height:1.6; box-shadow:0 4px 20px rgba(0,0,0,0.4);
+    border-left:4px solid #FF4D6D;
+  `;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 15000); // 15秒表示（読む時間を確保）
+  console.error('Organization verification required for gpt-image-2');
 }
 
 // フィルターされた入力の代わりに使う安全な場面描写
@@ -3049,6 +3073,7 @@ function updateWaitingStatus(type, extra) {
     safety_cooldown: () => `🛡 ストーリー内の言葉がOpenAIの安全システムに引っかかりました。<br><span style="color:#FFD93D;">約 ${extra.sec} 秒</span> 後に再開します`,
     error_network: () => `⚠️ 通信エラーが発生しました（${extra.msg}）<br>次の枚数の生成を試みています…`,
     error_auth:    () => `🔑 APIキーが無効または残高不足です<br>OpenAIのダッシュボードをご確認ください`,
+    error_org_verify: () => `🔒 OpenAIの組織認証が未完了です<br>platform.openai.com/settings/organization/general<br>で認証してください`,
     done:          () => `✅ 全部の絵ができました！`,
     partial_done:  () => `第 ${extra.done} 枚完了 / ${extra.total} 枚中<br><span style="font-size:0.78rem;color:rgba(255,255,255,0.7);">残りを生成中…</span>`,
   };
