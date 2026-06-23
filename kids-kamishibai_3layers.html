@@ -1471,7 +1471,7 @@ body {
       <button class="style-btn selected" onclick="selectArtStyle('mukashi')" id="artstyle-mukashi">
         <span class="style-icon">🏮</span>
         <span class="style-name">むかしばなし</span>
-        <span class="style-desc">まんが日本昔ばなし風</span>
+        <span class="style-desc">昭和レトロ昔話風</span>
       </button>
       <button class="style-btn" onclick="selectArtStyle('anime')" id="artstyle-anime">
         <span class="style-icon">✨</span>
@@ -2055,7 +2055,7 @@ function getAgeSystemPrompt() {
 const ART_STYLES = {
   mukashi: {
     label: 'むかしばなし',
-    prompt: 'まんが日本昔ばなし（TBSアニメ1975年）スタイル。柔らかい水彩タッチ、丸い頭・小さな弧の目・丸いピンクの頬・鼻なし・ずんぐりした体のキャラクター、和風背景、暖かみのある色彩、子供向けかみしばい。'
+    prompt: '1970〜80年代の日本の昔話アニメ番組に見られる、ほのぼのとした昭和レトロ様式。柔らかい水彩タッチ、丸い頭・小さな弧の目・丸いピンクの頬・鼻なし・ずんぐりした体のキャラクター、和風背景、暖かみのある色彩、子供向けかみしばい。'
   },
   anime: {
     label: 'アニメ風',
@@ -2064,7 +2064,7 @@ const ART_STYLES = {
 
   western: {
     label: 'アメコミ風',
-    prompt: 'アメリカンカートゥーンスタイル（カートゥーンネットワーク風）。太いアウトライン、ポップで鮮やかな原色、大げさな表情とポーズ、ユーモラスで元気いっぱいの子供向けイラスト。'
+    prompt: 'アメリカンカートゥーンスタイル（1990年代の子供向けテレビアニメ風）。太いアウトライン、ポップで鮮やかな原色、大げさな表情とポーズ、ユーモラスで元気いっぱいの子供向けイラスト。'
   }
 };
 
@@ -2973,7 +2973,7 @@ function getSafeImageText() {
 function buildImagePrompt(context, currentText) {
   const styleKey = state.artStyle || 'mukashi';
   const stylePrompt = ART_STYLES[styleKey]?.prompt || ART_STYLES.mukashi.prompt;
-  const charDesc = state.mainCharacter || 'まんが日本昔ばなし風の丸くて可愛いこどもキャラクター';
+  const charDesc = state.mainCharacter || '昭和レトロ昔話風の丸くて可愛いこどもキャラクター';
   return `${stylePrompt}
 【重要・キャラクター固定】メインキャラクター: ${charDesc}。このキャラクターの髪型・髪の色・服の色・顔・体型を全シーン必ず統一して描くこと。絶対に変えないこと。
 場面:「${currentText}」
