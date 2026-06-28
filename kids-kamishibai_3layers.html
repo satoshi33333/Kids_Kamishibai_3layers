@@ -2311,12 +2311,17 @@ async function startRecording() {
   // Start MediaRecorder for audio capture
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    state.mediaRecorder = new MediaRecorder(stream);
+    const _preferredMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus'];
+    const _supportedMime = (window.MediaRecorder && MediaRecorder.isTypeSupported)
+      ? _preferredMimeTypes.find(t => MediaRecorder.isTypeSupported(t))
+      : null;
+    state.mediaRecorder = _supportedMime ? new MediaRecorder(stream, { mimeType: _supportedMime }) : new MediaRecorder(stream);
     state.mediaRecorder.ondataavailable = (e) => {
       if (e.data.size > 0) state.audioChunks.push(e.data);
     };
     state.mediaRecorder.onstop = () => {
-      state.pendingAudioBlob = new Blob(state.audioChunks, { type: 'audio/webm' });
+      const _actualMime = state.mediaRecorder.mimeType || _supportedMime || 'audio/webm';
+      state.pendingAudioBlob = new Blob(state.audioChunks, { type: _actualMime });
       stream.getTracks().forEach(t => t.stop());
     };
     state.mediaRecorder.start();
@@ -2324,7 +2329,12 @@ async function startRecording() {
 
   // Start speech recognition
   recognition = initSpeechRecognition();
-  if (recognition) recognition.start();
+  if (recognition) {
+    recognition.start();
+  } else {
+    showToast('🎤 おんせいにゅうりょくが つかえません。もじでいれてね！');
+    toggleTextInput();
+  }
 }
 
 function stopRecording() {
