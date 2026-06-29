@@ -1484,30 +1484,7 @@ body {
     </div>
   </div>
 
-  <div class="api-section">
-    <h3>🔑 APIキー（おとなのひと用）</h3>
-    <div class="api-row">
-      <label>Anthropic API</label>
-      <input type="password" id="api-anthropic" placeholder="sk-ant-..." />
-    </div>
-    <div class="api-row">
-      <label>OpenAI API</label>
-      <input type="password" id="api-openai" placeholder="sk-..." />
-    </div>
-    <div class="api-row">
-      <label>Google TTS API</label>
-      <input type="password" id="api-google" placeholder="AIza..." />
-    </div>
-    <!-- 保存オプション -->
-    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;padding:12px 14px;background:rgba(255,255,255,0.55);border-radius:14px;border:1px solid rgba(0,0,0,0.08);">
-      <input type="checkbox" id="save-keys-check" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;" />
-      <div style="flex:1;">
-        <div style="font-size:0.88rem;font-weight:700;color:#444;">このブラウザに保存する</div>
-        <div style="font-size:0.75rem;color:#888;margin-top:2px;">次回から入力不要。このデバイス内にのみ保存されます。</div>
-      </div>
-      <button onclick="clearSavedKeys()" id="btn-clear-keys" style="display:none;background:transparent;border:1px solid #ffaaaa;color:#cc4444;border-radius:8px;padding:5px 10px;font-size:0.75rem;font-family:inherit;cursor:pointer;white-space:nowrap;">🗑 削除</button>
-    </div>
-  </div>
+  <!-- APIキー入力は不要になりました（Cloudflare Worker経由でサーバー側のキーを使用） -->
 
   <button class="btn-go" onclick="startGame()">
     ゲームスタート！ 🚀
@@ -1768,7 +1745,7 @@ let state = {
   audioChunks: [],
   recognizedText: '',
   pendingAudioBlob: null,
-  keys: { anthropic: '', openai: '', google: '' },
+  keys: { anthropic: 'proxy', openai: 'proxy', google: 'proxy' }, // Cloudflare Worker経由のため実キーはブラウザに置かない
   filterSuggestion: '',
   lastInputWasFiltered: false,
   safetyBlocked: false,
@@ -2142,20 +2119,7 @@ function makeNameInput(role, idx) {
 updatePlayerNameInputs();
 
 function startGame() {
-  state.keys.anthropic = document.getElementById('api-anthropic').value.trim();
-  state.keys.openai = document.getElementById('api-openai').value.trim();
-  state.keys.google = document.getElementById('api-google').value.trim();
-
-  // チェックボックスが入っていたらlocalStorageに保存
-  if (document.getElementById('save-keys-check')?.checked) {
-    try {
-      localStorage.setItem('ehon_keys', JSON.stringify({
-        anthropic: state.keys.anthropic,
-        openai: state.keys.openai,
-        google: state.keys.google,
-      }));
-    } catch(e) {}
-  }
+  // APIキーはCloudflare Worker側で管理（このアプリ側では何もしない）
 
   // Build players array
   state.players = [];
@@ -2427,16 +2391,7 @@ function onRecognizedEdit(val) {
 }
 
 function clearSavedKeys() {
-  try { localStorage.removeItem('ehon_keys'); } catch(e) {}
-  ['api-anthropic','api-openai','api-google'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = '';
-  });
-  const chk = document.getElementById('save-keys-check');
-  if (chk) chk.checked = false;
-  const btn = document.getElementById('btn-clear-keys');
-  if (btn) btn.style.display = 'none';
-  showToast('🗑 保存したAPIキーを削除しました');
+  // APIキー保存機能は廃止（Cloudflare Worker経由のため不要）
 }
 
 function toggleTextInput() {
@@ -2844,12 +2799,9 @@ async function generateSceneImage(text, turnIdx) {
   const imagePrompt = buildImagePrompt(storyContext, text);
 
   try {
-    const res = await fetch('https://api.openai.com/v1/images/generations', {
+    const res = await fetch(`${PROXY_BASE}/openai-image`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${state.keys.openai}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'gpt-image-2',
         prompt: imagePrompt,
@@ -3464,7 +3416,7 @@ async function speakText(text) {
 }
 
 async function playGoogleTTS(text) {
-  const res = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${state.keys.google}`, {
+  const res = await fetch(`${PROXY_BASE}/google-tts`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -3488,17 +3440,17 @@ async function playGoogleTTS(text) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ============================================================
+//  PROXY WORKER (Cloudflare) — APIキーはここに保存しない
+// ============================================================
+const PROXY_BASE = 'https://kamishibai-proxy.aspiresatoshi.workers.dev';
+
+// ============================================================
 //  ANTHROPIC API
 // ============================================================
 async function callAnthropic(messages, systemPrompt, maxTokens = 500) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch(`${PROXY_BASE}/anthropic`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': state.keys.anthropic,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'claude-opus-4-5',
       max_tokens: maxTokens,
@@ -3810,21 +3762,7 @@ function shootConfetti() {
 // ============================================================
 //  AUTO-LOAD SAVED API KEYS
 // ============================================================
-(function() {
-  try {
-    const saved = localStorage.getItem('ehon_keys');
-    if (!saved) return;
-    const keys = JSON.parse(saved);
-    const fill = (id, val) => { const el = document.getElementById(id); if (el && val) el.value = val; };
-    fill('api-anthropic', keys.anthropic);
-    fill('api-openai', keys.openai);
-    fill('api-google', keys.google);
-    const chk = document.getElementById('save-keys-check');
-    if (chk) chk.checked = true;
-    const btn = document.getElementById('btn-clear-keys');
-    if (btn) btn.style.display = 'block';
-  } catch(e) {}
-})();
+// APIキーの自動復元機能は廃止（Cloudflare Worker経由のため不要）
 </script>
 </body>
 </html>
