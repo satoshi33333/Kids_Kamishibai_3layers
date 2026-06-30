@@ -2807,7 +2807,7 @@ async function generateSceneImage(text, turnIdx) {
         prompt: imagePrompt,
         n: 1,
         size: '1536x1024',   // gpt-image-2: 16px倍数・最大3840px・縦横比3:1以内であればOK
-        quality: 'medium',   // gpt-image-2 valid: low | medium | high | auto
+        quality: 'low',      // gpt-image-2 valid: low | medium | high | auto（速度優先）
       }),
     });
 
