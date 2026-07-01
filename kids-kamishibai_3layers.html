@@ -2173,12 +2173,12 @@ function startGame() {
 
 function pickMainCharacter() {
   const characters = [
-    '丸くて小さな男の子（短い黒髪・赤いシャツ・青いズボン・丸い顔・大きな黒目・ぷっくりした赤い頬）',
-    '丸くて小さな女の子（おさげの黒髪・黄色いワンピース・丸い顔・大きな黒目・ぷっくりした赤い頬）',
-    '丸くて小さな男の子（茶色いくせ毛・緑のシャツ・茶色のズボン・丸い顔・大きな黒目・ぷっくりした赤い頬）',
-    '小さなきつね（オレンジ色の毛・白いしっぽ・大きな耳・まんまるの目）',
-    '小さなくま（茶色い毛・まるい耳・大きな黒目・ずんぐりした体）',
-    '小さなうさぎ（白い毛・ピンクの耳・大きな赤い目・ふわふわのしっぽ）',
+    'a cute chibi small boy, short black hair, red shirt, blue pants, big round black eyes, chubby pink cheeks, tiny round nose',
+    'a cute chibi small girl, black pigtails, yellow dress, big round black eyes, chubby pink cheeks, tiny round nose',
+    'a cute chibi small boy, curly brown hair, green shirt, brown pants, big round black eyes, chubby pink cheeks',
+    'a small cute fox, orange fur, white fluffy tail, big pointy ears, round bright eyes, chubby body',
+    'a small cute bear, light brown fur, round ears, big black eyes, chubby round body, small snout',
+    'a small cute rabbit, white fur, pink inner ears, big round red eyes, fluffy tail, chubby body',
   ];
   return characters[Math.floor(Math.random() * characters.length)];
 }
@@ -3008,18 +3008,24 @@ function getSafeImageText() {
   return safePhrases[Math.floor(Math.random() * safePhrases.length)];
 }
 
+// 絵のスタイルを英語で定義（日本語プロンプトがOpenAI安全フィルターに誤検知されるため）
+const ART_STYLE_PROMPTS_EN = {
+  mukashi: 'Soft Japanese watercolor picture book style. Warm nostalgic colors, gentle brush strokes, hand-drawn look with ink outlines. Cozy countryside scenery. Characters are simple, round, and friendly.',
+  anime:   'Modern Japanese anime style for children. Bright vivid colors, sparkly big eyes, clean smooth linework, soft cel shading. Cheerful adventure scene.',
+  western: 'American children\'s cartoon style, 1990s TV animation. Thick black outlines, bold pop colors, exaggerated expressions and poses, playful and energetic.',
+};
+
 function buildImagePrompt(context, currentText) {
   const styleKey = state.artStyle || 'mukashi';
-  const stylePrompt = ART_STYLES[styleKey]?.prompt || ART_STYLES.mukashi.prompt;
-  const charDesc = state.mainCharacter || '昭和レトロ昔話風の丸くて可愛いこどもキャラクター';
-  // 英語のセーフガード文を先頭に付けてOpenAIの誤検知を防ぐ
-  const safetyPrefix = 'Safe, child-friendly illustration for a kids picture book. Non-violent, wholesome, educational content. ';
-  return `${safetyPrefix}${stylePrompt}
-【重要・キャラクター固定】メインキャラクター: ${charDesc}。このキャラクターの髪型・髪の色・服の色・顔・体型を全シーン必ず統一して描くこと。絶対に変えないこと。
-場面:「${currentText}」
-ストーリー背景:「${context.substring(0, 150)}」
-構図: 横長4:3、子供向け絵本の1シーン。
-No text, no letters, no words anywhere in the image. Pure illustration only.`;
+  const stylePrompt = ART_STYLE_PROMPTS_EN[styleKey] || ART_STYLE_PROMPTS_EN.mukashi;
+  const charDesc = state.mainCharacter || 'a cute round chibi child character';
+
+  return `Safe, wholesome, non-violent children's picture book illustration for ages 4-12. ${stylePrompt}
+MAIN CHARACTER (keep identical in every scene): ${charDesc}.
+SCENE: ${currentText}
+STORY CONTEXT: ${context.substring(0, 120)}
+COMPOSITION: 4:3 landscape, single illustrated scene, picture book style.
+IMPORTANT: No text, no letters, no words, no captions, no writing of any kind anywhere in the image.`;
 }
 
 function showSceneImage(src) {
@@ -3407,6 +3413,19 @@ function fadeBgm() {
 
 let isPlaying = false;
 
+// iOS: ボタン押下の同期タイミングでオーディオをアンロックする
+async function _unlockIOSAudio() {
+  if (!_isIOS) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    await ctx.resume();
+    // 無音WAVを再生してHTMLAudioElementもアンロック
+    const sil = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+    await sil.play().catch(() => {});
+    ctx.close();
+  } catch(e) {}
+}
+
 async function playbackAll() {
   if (isPlaying) {
     isPlaying = false;
@@ -3417,6 +3436,8 @@ async function playbackAll() {
   isPlaying = true;
   playbackIdx = 0;
   document.getElementById('btn-playback').innerHTML = '⏹ とめる';
+  // iOSはfetch前にオーディオをアンロックしておく（ユーザー操作の同期コンテキスト内）
+  await _unlockIOSAudio();
   startBgm();
   await playSlide(0);
 }
@@ -3451,17 +3472,17 @@ async function playSlide(idx) {
     });
     document.getElementById('audio-playing-badge').classList.add('hidden');
   } else if (turn.text) {
-    // TTS: iOSはspeechSynthesis優先、デスクトップはGoogle TTS優先
+    // TTS再生（iOSはアンロック済みのためGoogle TTSも使用可）
     document.getElementById('audio-playing-badge').classList.remove('hidden');
     let spoken = false;
-    if (!_isIOS && state.keys.google) {
+    if (state.keys.google) {
       try {
         await playGoogleTTS(turn.text);
         spoken = true;
       } catch(e) {}
     }
     if (!spoken) {
-      // Web Speech API (iOS対応)
+      // Google TTS失敗時はWeb Speech APIにフォールバック
       await new Promise(resolve => {
         if (!('speechSynthesis' in window)) { setTimeout(resolve, 2000); return; }
         window.speechSynthesis.cancel();
