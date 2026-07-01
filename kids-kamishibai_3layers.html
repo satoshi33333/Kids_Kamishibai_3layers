@@ -2173,12 +2173,12 @@ function startGame() {
 
 function pickMainCharacter() {
   const characters = [
-    'a cute chibi small boy, short black hair, red shirt, blue pants, big round black eyes, chubby pink cheeks, tiny round nose',
-    'a cute chibi small girl, black pigtails, yellow dress, big round black eyes, chubby pink cheeks, tiny round nose',
-    'a cute chibi small boy, curly brown hair, green shirt, brown pants, big round black eyes, chubby pink cheeks',
-    'a small cute fox, orange fur, white fluffy tail, big pointy ears, round bright eyes, chubby body',
-    'a small cute bear, light brown fur, round ears, big black eyes, chubby round body, small snout',
-    'a small cute rabbit, white fur, pink inner ears, big round red eyes, fluffy tail, chubby body',
+    '丸くて小さな男の子（短い黒髪・赤いシャツ・青いズボン・丸い顔・大きな黒目・ぷっくりした赤い頬）',
+    '丸くて小さな女の子（おさげの黒髪・黄色いワンピース・丸い顔・大きな黒目・ぷっくりした赤い頬）',
+    '丸くて小さな男の子（茶色いくせ毛・緑のシャツ・茶色のズボン・丸い顔・大きな黒目・ぷっくりした赤い頬）',
+    '小さなきつね（オレンジ色の毛・白いしっぽ・大きな耳・まんまるの目）',
+    '小さなくま（茶色い毛・まるい耳・大きな黒目・ずんぐりした体）',
+    '小さなうさぎ（白い毛・ピンクの耳・大きな赤い目・ふわふわのしっぽ）',
   ];
   return characters[Math.floor(Math.random() * characters.length)];
 }
@@ -2900,23 +2900,30 @@ async function generateSceneImage(text, turnIdx) {
       } catch(_) { errMsg = errBody; }
       console.error('Image API error', res.status, errCode, errMsg);
 
-      // gpt-image-2の構造化エラー（moderation_blocked）または旧形式の文字列判定
-      if (errCode === 'moderation_blocked' || errMsg.includes('safety') || errMsg.includes('rejected') || errMsg.includes('content policy')) {
-        // 安全システムブロック → フラグを立てて冷却期間を発動
+      // エラー種別の判定（優先度順）
+      const isQuota    = res.status === 429 || errCode === 'insufficient_quota' || errMsg.includes('quota') || errMsg.includes('billing') || errMsg.includes('credit');
+      const isRateLimit= res.status === 429 && !isQuota || errMsg.includes('rate_limit');
+      const isAuthErr  = res.status === 401 || errMsg.includes('invalid_api_key') || errMsg.includes('Incorrect API key');
+      const isOrgErr   = res.status === 403 || errMsg.includes('must be verified') || errMsg.includes('Organization');
+      const isSafety   = errCode === 'moderation_blocked' || errMsg.includes('content policy') || errMsg.includes('safety system');
+
+      if (isQuota) {
+        updateWaitingStatus('error_auth', { msg: 'OpenAIのクレジット残高不足' });
+        showCreditError();
+      } else if (isRateLimit) {
+        updateWaitingStatus('error_auth', { msg: 'レート制限超過 — しばらく待ってね' });
+        showImageError('レート制限', '少し待ってからもう一度試してね');
+      } else if (isAuthErr) {
+        updateWaitingStatus('error_auth', {});
+        showImageError('APIキーエラー', 'OpenAIのAPIキーを確認してください');
+      } else if (isOrgErr) {
+        updateWaitingStatus('error_org_verify', {});
+        showOrgVerifyMessage();
+      } else if (isSafety) {
         state.safetyBlocked = true;
         showSafetyBlockMessage();
       } else if (res.status === 400) {
         showImageError('えのせいせいにしっぱいしたよ', 'もうすこし かんたんな おはなしに してみよう！');
-      } else if (res.status === 401 || errMsg.includes('invalid_api_key') || errMsg.includes('Incorrect API key')) {
-        updateWaitingStatus('error_auth', {});
-        showSafetyBlockMessage();
-      } else if (res.status === 403 || errMsg.includes('must be verified') || errMsg.includes('Organization')) {
-        // 組織未認証エラー（gpt-image-2も同様に組織認証が必要）
-        updateWaitingStatus('error_org_verify', {});
-        showOrgVerifyMessage();
-      } else if (res.status === 429 || errMsg.includes('rate_limit') || errMsg.includes('quota')) {
-        updateWaitingStatus('error_auth', { msg: 'APIの残高不足またはレート制限超過' });
-        showImageError('残高不足 / レート超過', errMsg.substring(0, 60));
       } else {
         showImageError(`エラー ${res.status}`, errMsg.substring(0, 80));
       }
@@ -2956,6 +2963,21 @@ async function generateSceneImage(text, turnIdx) {
 function showImageError(title, detail) {
   showToast(`⚠️ えのせいせい: ${title}`);
   console.warn('Image error:', title, detail);
+}
+
+function showCreditError() {
+  const el = document.createElement('div');
+  el.style.cssText = `
+    position:fixed; bottom:80px; left:50%; transform:translateX(-50%);
+    background:#2D2D2D; color:white; padding:14px 20px;
+    border-radius:16px; font-size:0.85rem; font-weight:700;
+    z-index:300; max-width:320px; text-align:center;
+    line-height:1.6; box-shadow:0 4px 20px rgba(0,0,0,0.4);
+    border-left:4px solid #FF6B6B;
+  `;
+  el.textContent = '💳【おとなのかたへ】OpenAIのクレジット残高が不足しています。platform.openai.com/settings/organization/billing でチャージしてください。';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 12000);
 }
 
 function showSafetyBlockMessage() {
@@ -3008,24 +3030,16 @@ function getSafeImageText() {
   return safePhrases[Math.floor(Math.random() * safePhrases.length)];
 }
 
-// 絵のスタイルを英語で定義（日本語プロンプトがOpenAI安全フィルターに誤検知されるため）
-const ART_STYLE_PROMPTS_EN = {
-  mukashi: 'Soft Japanese watercolor picture book style. Warm nostalgic colors, gentle brush strokes, hand-drawn look with ink outlines. Cozy countryside scenery. Characters are simple, round, and friendly.',
-  anime:   'Modern Japanese anime style for children. Bright vivid colors, sparkly big eyes, clean smooth linework, soft cel shading. Cheerful adventure scene.',
-  western: 'American children\'s cartoon style, 1990s TV animation. Thick black outlines, bold pop colors, exaggerated expressions and poses, playful and energetic.',
-};
-
 function buildImagePrompt(context, currentText) {
   const styleKey = state.artStyle || 'mukashi';
-  const stylePrompt = ART_STYLE_PROMPTS_EN[styleKey] || ART_STYLE_PROMPTS_EN.mukashi;
-  const charDesc = state.mainCharacter || 'a cute round chibi child character';
-
-  return `Safe, wholesome, non-violent children's picture book illustration for ages 4-12. ${stylePrompt}
-MAIN CHARACTER (keep identical in every scene): ${charDesc}.
-SCENE: ${currentText}
-STORY CONTEXT: ${context.substring(0, 120)}
-COMPOSITION: 4:3 landscape, single illustrated scene, picture book style.
-IMPORTANT: No text, no letters, no words, no captions, no writing of any kind anywhere in the image.`;
+  const stylePrompt = ART_STYLES[styleKey]?.prompt || ART_STYLES.mukashi.prompt;
+  const charDesc = state.mainCharacter || '昭和レトロ昔話風の丸くて可愛いこどもキャラクター';
+  return `${stylePrompt}
+【重要・キャラクター固定】メインキャラクター: ${charDesc}。このキャラクターの髪型・髪の色・服の色・顔・体型を全シーン必ず統一して描くこと。絶対に変えないこと。
+場面:「${currentText}」
+ストーリー背景:「${context.substring(0, 200)}」
+構図: 横長4:3、子供向け絵本の1シーン。
+【絶対禁止】画像の中に文字・テキスト・ひらがな・カタカナ・漢字・アルファベット・数字・記号を一切含めないこと。pure illustration only, no text, no letters, no words, no writing, no captions of any kind anywhere in the image.`;
 }
 
 function showSceneImage(src) {
