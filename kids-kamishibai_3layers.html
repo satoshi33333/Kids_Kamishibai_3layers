@@ -2092,16 +2092,16 @@ function getAgeSystemPrompt() {
 const ART_STYLES = {
   mukashi: {
     label: 'むかしばなし',
-    prompt: '手描きの和風絵本スタイル。水彩と墨彩を思わせる柔らかな筆致と、にじみやかすれのある紙の質感。落ち着いた和の色彩、日本の田園や山村のような穏やかな原風景、余白を活かした構図で、温かく懐かしい高い情緒性を持つ。人物デザインは素朴で親しみやすく、柔らかい丸みのある造形。ただし、紙芝居として一枚の絵だけを見せながら物語を語る演出であることを踏まえ、舞台のような誇張表現も併せ持たせる：一枚の絵に情報量を持たせ、その場面の状況が絵だけで伝わるようにする。登場人物の表情は大きく、感情がひと目で分かるよう誇張する。ポーズも誇張し、動きや気持ちが遠くからでも伝わるようにする。輪郭線は太く、黒線をはっきりと入れることで、遠目からの視認性を確保する。和の水彩画としての柔らかさ・懐かしさと、紙芝居・舞台としての視認性・誇張表現を両立させたスタイル。柔らかい頭・小さな弧の目・丸いピンクの頬・鼻なし・ずんぐりした体のキャラクター、子供向けかみしばい。'
+    prompt: 'Hand-drawn Japanese picture book style. Soft brushwork evoking watercolor and ink wash painting, with bleeding and dry-brush texture on paper. Muted traditional Japanese color palette, serene rural landscapes of Japanese countryside and mountain villages, compositions with generous negative space, warm and nostalgic atmosphere with high emotional resonance. Character designs are simple, approachable, with soft rounded forms. However, as this is a kamishibai (picture storytelling) performance where a single illustration tells the story, the style also incorporates theatrical exaggeration: each illustration must convey the full situation of the scene through visuals alone; characters\' facial expressions are large and exaggerated so emotions are immediately clear; poses are exaggerated so movement and feeling read from a distance; outlines are bold with clear black lines for visibility. The style balances the softness and nostalgia of Japanese watercolor painting with the visual clarity and theatrical expressiveness of kamishibai performance art. No additional characters beyond those specified in the scene.'
   },
   anime: {
     label: 'アニメ風',
-    prompt: '現代日本アニメスタイル（2020年代・明るい少年アニメ風）。大きなキラキラした瞳、鮮やかな色彩、丁寧な背景美術、柔らかいセルシェーディング、子供向け冒険アニメの1シーン。'
+    prompt: 'Modern Japanese anime style (2020s bright children\'s adventure anime). Large sparkling eyes, vibrant colors, detailed background art, soft cel-shading, clean line art. One scene from a children\'s adventure anime. No additional characters beyond those specified in the scene.'
   },
 
   western: {
     label: 'アメコミ風',
-    prompt: 'アメリカンカートゥーンスタイル（1990年代の子供向けテレビアニメ風）。太いアウトライン、ポップで鮮やかな原色、大げさな表情とポーズ、ユーモラスで元気いっぱいの子供向けイラスト。'
+    prompt: 'American cartoon style (1990s children\'s TV animation). Bold thick outlines, pop art primary colors, exaggerated facial expressions and dynamic poses, humorous and energetic children\'s illustration. One scene from a children\'s cartoon. No additional characters beyond those specified in the scene.'
   }
 };
 
@@ -3599,20 +3599,18 @@ async function playSlide(idx) {
     });
     document.getElementById('audio-playing-badge').classList.add('hidden');
   } else if (turn.text) {
-    // TTS再生（iOSはアンロック済みのためGoogle TTSも使用可）
     document.getElementById('audio-playing-badge').classList.remove('hidden');
     let spoken = false;
-    if (state.keys.google) {
+    // iOSはfetchが再生ブロックを引き起こすためspeechSynthesisを直接使用
+    // デスクトップはGoogle TTS（高品質）を優先
+    if (state.keys.google && !_isIOS) {
       try {
-        // fetchハング対策：7秒でタイムアウト
         const ttsTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('tts_timeout')), 7000));
         await Promise.race([playGoogleTTS(turn.text), ttsTimeout]);
         spoken = true;
       } catch(e) {}
     }
     if (!spoken) {
-      // Google TTS失敗時はWeb Speech APIにフォールバック
-      // タイムアウト付き（iOSでonendが発火しない場合のフォールバック）
       await new Promise(resolve => {
         if (!('speechSynthesis' in window)) { setTimeout(resolve, 2000); return; }
         window.speechSynthesis.cancel();
@@ -3623,7 +3621,8 @@ async function playSlide(idx) {
         const voices = window.speechSynthesis.getVoices();
         const jaVoice = voices.find(v => v.lang.startsWith('ja'));
         if (jaVoice) utter.voice = jaVoice;
-        const maxMs = Math.max(4000, turn.text.length * 250);
+        // テキスト長ベースのタイムアウト（1文字あたり約150ms、最低3秒）
+        const maxMs = Math.max(3000, turn.text.length * 150);
         const t = setTimeout(resolve, maxMs);
         utter.onend = () => { clearTimeout(t); resolve(); };
         utter.onerror = () => { clearTimeout(t); setTimeout(resolve, 300); };
