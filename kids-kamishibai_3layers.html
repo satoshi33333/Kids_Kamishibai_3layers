@@ -830,6 +830,7 @@ body {
   cursor: pointer;
   transition: all 0.2s;
   display: flex; align-items: center; justify-content: center;
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
 .slide-nav-btn:hover { background: rgba(255,255,255,0.3); }
@@ -1262,6 +1263,7 @@ body {
   font-weight: 700;
   cursor: pointer;
   transition: all 0.15s;
+  -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
 }
 .btn-show-grid:hover { background: rgba(255,255,255,0.25); }
@@ -1542,7 +1544,7 @@ body {
         <div class="wave-bar" style="height:8px;"></div>
       </div>
 
-      <button class="record-btn" id="record-btn" onmousedown="startRecording()" onmouseup="stopRecording()" ontouchstart="startRecording()" ontouchend="stopRecording()">
+      <button class="record-btn" id="record-btn" onmousedown="startRecording()" onmouseup="stopRecording()" ontouchstart="event.preventDefault();startRecording()" ontouchend="event.preventDefault();stopRecording()">
         <span class="mic-icon">🎙️</span>
         <span class="btn-label">おしながら はなす</span>
       </button>
@@ -2233,9 +2235,12 @@ function advancePlayer() {
 }
 
 // ============================================================
-//  VOICE INPUT (MediaRecorder + WebSpeech)
+//  VOICE INPUT (MediaRecorder + WebSpeech / Whisper fallback)
 // ============================================================
 let recognition = null;
+
+// SpeechRecognition が使えるか起動時に判定
+const hasSpeechRecognition = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
 
 function initSpeechRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -2265,14 +2270,14 @@ async function startRecording() {
   state.audioChunks = [];
   state.pendingAudioBlob = null;
   state.recognizedText = '';
-  const _ta2 = document.getElementById('recognized-text'); _ta2.value = ''; _ta2.placeholder = '…きいているよ…';
+  const _ta2 = document.getElementById('recognized-text'); _ta2.value = ''; _ta2.placeholder = '…きいているよ…'; _ta2.readOnly = false;
   document.getElementById('btn-send').disabled = true;
 
   const btn = document.getElementById('record-btn');
   btn.classList.add('recording');
   document.getElementById('waveform').classList.add('active');
 
-  // Start MediaRecorder for audio capture
+  // MediaRecorder（全ブラウザ共通・音声録音）
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const _preferredMimeTypes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus'];
@@ -2291,13 +2296,15 @@ async function startRecording() {
     state.mediaRecorder.start();
   } catch (e) { console.warn('MediaRecorder error:', e); }
 
-  // Start speech recognition
-  recognition = initSpeechRecognition();
-  if (recognition) {
-    recognition.start();
+  // 音声認識: SpeechRecognition が使える → Web Speech API
+  //           使えない（iOS Safari等）→ 録音のみ・stopRecording時にWhisperへ送る
+  if (hasSpeechRecognition) {
+    recognition = initSpeechRecognition();
+    if (recognition) recognition.start();
   } else {
-    showToast('🎤 おんせいにゅうりょくが つかえません。もじでいれてね！');
-    toggleTextInput();
+    // Whisperモード：録音中であることをUIで示す
+    const ta = document.getElementById('recognized-text');
+    ta.placeholder = '🎙️ ろくおんちゅう… はなしおわったらはなしてね';
   }
 }
 
@@ -2313,24 +2320,86 @@ function stopRecording() {
     state.mediaRecorder.stop();
   }
 
-  setTimeout(() => {
-    const text = state.recognizedText.trim();
-    const ta = document.getElementById('recognized-text');
-    const eh = document.getElementById('edit-hint');
-    const bar = document.getElementById('edit-confirm-bar');
+  if (hasSpeechRecognition) {
+    // Web Speech API モード：認識結果をそのまま表示
+    setTimeout(() => {
+      const text = state.recognizedText.trim();
+      const ta = document.getElementById('recognized-text');
+      const eh = document.getElementById('edit-hint');
+      const bar = document.getElementById('edit-confirm-bar');
+      if (text) {
+        ta.value = text;
+        ta.style.borderStyle = 'dashed'; ta.style.borderColor = 'var(--pink)'; ta.style.textAlign = 'center';
+        ta.style.background = 'rgba(255,255,255,0.9)';
+        if (eh) eh.style.display = 'block';
+        if (bar) bar.style.display = 'none';
+        document.getElementById('btn-send').disabled = false;
+      } else {
+        ta.value = ''; ta.placeholder = 'もういちどはなしてね 🎙️';
+        if (eh) eh.style.display = 'none';
+        if (bar) bar.style.display = 'none';
+      }
+    }, 400);
+  } else {
+    // Whisper fallback モード：録音完了後にAPIへ送信
+    setTimeout(() => transcribeWithWhisper(), 400);
+  }
+}
+
+// Whisper API で音声をテキストに変換
+async function transcribeWithWhisper() {
+  const ta = document.getElementById('recognized-text');
+  const eh = document.getElementById('edit-hint');
+  const bar = document.getElementById('edit-confirm-bar');
+
+  if (!state.pendingAudioBlob || state.pendingAudioBlob.size < 1000) {
+    ta.value = ''; ta.placeholder = 'もういちどはなしてね 🎙️';
+    return;
+  }
+
+  // 変換中 UI
+  ta.value = '';
+  ta.placeholder = '🔄 ことばにへんかんちゅう…';
+  document.getElementById('btn-send').disabled = true;
+
+  try {
+    // MIMEタイプからファイル拡張子を決定
+    const mimeType = state.pendingAudioBlob.type || 'audio/mp4';
+    const ext = mimeType.includes('webm') ? 'webm'
+               : mimeType.includes('ogg')  ? 'ogg'
+               : mimeType.includes('aac')  ? 'aac'
+               : 'mp4';
+    const filename = `audio.${ext}`;
+
+    const form = new FormData();
+    form.append('file', state.pendingAudioBlob, filename);
+    form.append('language', 'ja');
+
+    const res = await fetch(`${PROXY_BASE}/whisper`, {
+      method: 'POST',
+      body: form,
+    });
+
+    if (!res.ok) throw new Error(`Whisper error ${res.status}`);
+    const data = await res.json();
+    const text = (data.text || '').trim();
+
     if (text) {
+      state.recognizedText = text;
       ta.value = text;
-      ta.style.borderStyle = 'dashed'; ta.style.borderColor = 'var(--pink)'; ta.style.textAlign = 'center';
-      ta.style.background = 'rgba(255,255,255,0.9)';
+      ta.style.borderStyle = 'dashed'; ta.style.borderColor = 'var(--pink)';
+      ta.style.textAlign = 'center'; ta.style.background = 'rgba(255,255,255,0.9)';
       if (eh) eh.style.display = 'block';
       if (bar) bar.style.display = 'none';
       document.getElementById('btn-send').disabled = false;
     } else {
       ta.value = ''; ta.placeholder = 'もういちどはなしてね 🎙️';
-      if (eh) eh.style.display = 'none';
-      if (bar) bar.style.display = 'none';
     }
-  }, 400);
+  } catch(e) {
+    console.warn('Whisper transcription error:', e);
+    ta.value = ''; ta.placeholder = 'もういちどはなしてね 🎙️';
+    showToast('🎤 きけませんでした。もういちどはなしてね！');
+  }
 }
 
 function clearInput() {
