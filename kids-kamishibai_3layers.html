@@ -3538,17 +3538,20 @@ function fadeBgm() {
 
 let isPlaying = false;
 
-// iOS: ボタン押下の同期タイミングでオーディオをアンロックする
+// iOS: ボタン押下の同期タイミングでオーディオをアンロックする（3秒タイムアウト付き）
 async function _unlockIOSAudio() {
   if (!_isIOS) return;
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    await ctx.resume();
-    // 無音WAVを再生してHTMLAudioElementもアンロック
-    const sil = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
-    await sil.play().catch(() => {});
-    ctx.close();
-  } catch(e) {}
+  const timeout = new Promise(r => setTimeout(r, 3000)); // 最大3秒待つ
+  const unlock = (async () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      await ctx.resume();
+      const sil = new Audio('data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=');
+      await sil.play().catch(() => {});
+      ctx.close();
+    } catch(e) {}
+  })();
+  await Promise.race([unlock, timeout]);
 }
 
 async function playbackAll() {
@@ -3561,10 +3564,12 @@ async function playbackAll() {
   isPlaying = true;
   playbackIdx = 0;
   document.getElementById('btn-playback').innerHTML = '⏹ とめる';
-  // iOSはfetch前にオーディオをアンロックしておく（ユーザー操作の同期コンテキスト内）
   await _unlockIOSAudio();
-  startBgm();
-  await playSlide(0);
+  try { startBgm(); } catch(e) {}
+  try { await playSlide(0); } catch(e) {
+    isPlaying = false;
+    document.getElementById('btn-playback').innerHTML = '▶️ さいせいする！';
+  }
 }
 
 async function playSlide(idx) {
