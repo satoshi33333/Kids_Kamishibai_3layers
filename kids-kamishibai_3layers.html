@@ -1007,6 +1007,37 @@ body {
   transform: translateY(-2px);
 }
 
+/* Safety level selector */
+.safety-level-row {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+.safety-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  border: 2px solid #ddd;
+  border-radius: 14px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.safety-btn .safety-icon { font-size: 1.6rem; }
+.safety-btn .safety-name { font-size: 0.8rem; font-weight: 800; }
+.safety-btn .safety-desc { font-size: 0.65rem; color: #888; font-weight: 400; line-height: 1.3; text-align: center; }
+.safety-btn:hover { transform: translateY(-2px); border-color: var(--purple); }
+.safety-btn.selected {
+  background: linear-gradient(135deg, #F3E8FF, #E8E0FF);
+  border-color: var(--purple);
+  box-shadow: 0 4px 0 rgba(155,89,182,0.25);
+  transform: translateY(-2px);
+}
+
 /* Game screen art style switcher */
 .art-style-bar {
   width: 100%;
@@ -1486,7 +1517,30 @@ body {
     </div>
   </div>
 
-  <!-- APIキー入力は不要になりました（Cloudflare Worker経由でサーバー側のキーを使用） -->
+  <!-- 親向け：安全レベル設定 -->
+  <div class="setup-card" style="border-color:var(--purple);">
+    <h3>🛡 えのあんぜんレベル（おとなのかたへ）</h3>
+    <div class="safety-level-row">
+      <button class="safety-btn" id="safety-btn-1" onclick="setSafetyLevel(1)">
+        <span class="safety-icon">🔓</span>
+        <span class="safety-name">じゆう</span>
+        <span class="safety-desc">こどものことばに<br>できるだけ忠実</span>
+      </button>
+      <button class="safety-btn selected" id="safety-btn-2" onclick="setSafetyLevel(2)">
+        <span class="safety-icon">⚖️</span>
+        <span class="safety-name">ふつう</span>
+        <span class="safety-desc">バランス重視<br>（おすすめ）</span>
+      </button>
+      <button class="safety-btn" id="safety-btn-3" onclick="setSafetyLevel(3)">
+        <span class="safety-icon">🛡</span>
+        <span class="safety-name">あんぜん</span>
+        <span class="safety-desc">安全最優先<br>フィルター強め</span>
+      </button>
+    </div>
+    <div id="safety-level-desc" style="font-size:0.8rem;color:var(--purple);margin-top:8px;text-align:center;">
+      ⚖️ ふつう：よくある言葉は自動で言い換え。バランス重視です
+    </div>
+  </div>
 
   <button class="btn-go" onclick="startGame()">
     ゲームスタート！ 🚀
@@ -1758,6 +1812,7 @@ let state = {
   childAge: 7,          // 4〜13（スライダーで設定）
   mainCharacter: null,  // ゲーム開始時に決定・全シーンで統一
   firstTurn: 'ai',      // ai | human
+  safetyLevel: 2,       // 1=じゆう | 2=ふつう | 3=あんぜん
 };
 
 let currentSlide = 0;
@@ -2501,10 +2556,10 @@ const SIMPLE_FILTER_WORDS = [
 ];
 
 async function checkAndFilter(text) {
-  // ローカル辞書のみでチェック（AI 2次チェックは廃止）
-  // 理由：Claude APIは子供の日常語（うんち等）を過剰にフィルターするため
-  const hasLocal = SIMPLE_FILTER_WORDS.some(w => text.includes(w));
+  // L1（じゆう）：ストーリーテキストのフィルターなし
+  if (state.safetyLevel === 1) return { needsFilter: false };
 
+  const hasLocal = SIMPLE_FILTER_WORDS.some(w => text.includes(w));
   if (hasLocal) {
     if (state.keys.anthropic) {
       try {
@@ -2614,7 +2669,8 @@ async function processTurn(text) {
     ? getSafeImageText()
     : displayText;
   state.lastInputWasFiltered = false;
-  generateSceneImageBackground(imageText, currentTurnIdx); // キューに追加（非同期）
+  const _ctx1 = state.turns.slice(-4, -1).map(t => t.text).filter(Boolean).join('。');
+  generateSceneImageBackground(imageText, currentTurnIdx, _ctx1);
 
   // Check if at max turns
   if (state.totalTurns >= state.maxTurns) {
@@ -2711,7 +2767,8 @@ ${context}
     updateTurnDots();
 
     // Generate image
-    generateSceneImageBackground(response, state.turns.length - 1);
+    const _ctx2 = state.turns.slice(-4, -1).map(t => t.text).filter(Boolean).join('。');
+    generateSceneImageBackground(response, state.turns.length - 1, _ctx2);
 
     if (state.totalTurns >= state.maxTurns) {
       setTimeout(() => document.getElementById('continue-popup').classList.remove('hidden'), 1000);
@@ -2738,6 +2795,51 @@ ${context}
 const imageGenQueue = [];
 let imageGenRunning = false;
 
+// 安全レベル選択
+function setSafetyLevel(level) {
+  state.safetyLevel = level;
+  [1, 2, 3].forEach(n => {
+    document.getElementById(`safety-btn-${n}`)?.classList.toggle('selected', n === level);
+  });
+  const descs = {
+    1: '🔓 じゆう：「鼻血」「うんち」などもAIが場面を読んで忠実に絵にします',
+    2: '⚖️ ふつう：よくある言葉は自動で言い換え。バランス重視です',
+    3: '🛡 あんぜん：不適切語はすべてポップアップで確認。安全最優先です',
+  };
+  const el = document.getElementById('safety-level-desc');
+  if (el) el.textContent = descs[level] || '';
+}
+
+// L1（じゆう）専用：Claudeが文脈を読んで忠実な英語ビジュアル描写を生成
+async function rewriteImagePromptL1(sceneText, storyContext, isSafetyRetry = false) {
+  const retryNote = isSafetyRetry
+    ? 'The previous description was blocked by OpenAI safety filter. Make it gentler while staying as faithful as possible to the scene.'
+    : '';
+  const prompt = `You are an assistant that converts Japanese children's story scenes into English visual descriptions for an image generation AI.
+
+Rules:
+- Describe the scene as FAITHFULLY as possible to the original text
+- Output only a visual description in English, 40 words max
+- Children's picture book illustration style
+- NO text, letters, or writing in the image
+- For blood/injuries: describe visually (e.g. "red spot on knee", "boy covering his nose with tissue")
+- For bathroom humor: describe the object visually (e.g. "brown steaming pile on the ground")
+- For nudity/sexual content: replace with "character in towel" or "characters hugging"
+- Do NOT mention the restriction or explain — just output the description
+${retryNote}
+
+Scene: 「${sceneText}」
+Story context: 「${storyContext}」`;
+
+  try {
+    const result = await callAnthropic([{ role: 'user', content: prompt }],
+      'Output only the English visual description. Nothing else.', 120);
+    return result?.trim() || null;
+  } catch(e) {
+    return null;
+  }
+}
+
 // 画像生成用テキストから不適切語を安全な言葉に置換
 function sanitizeImageText(text) {
   const replacements = [
@@ -2746,14 +2848,14 @@ function sanitizeImageText(text) {
     ['まんこ',     'おはな'],
     ['ちくび',     'ボタン'],
     ['きんたま',   'どんぐり'],
-    ['おしり',     'しっぽのした'],
-    ['うんこ',     'まるいもの'],
-    ['うんち',     'まるいもの'],
-    ['はだか',     'ふわふわ'],
-    ['せっくす',   'あそぶ'],
-    ['えっち',     'たのしい'],
-    ['ハゲ',       'まるいあたま'],
-    ['はげ',       'まるいあたま'],
+    ['おしり',     'まるいうしろのぶぶん'],
+    ['うんこ',     'ちゃいろいまるいもの'],
+    ['うんち',     'ちゃいろいまるいもの'],
+    ['はだか',     'おふろあがりのすがた'],
+    ['せっくす',   'だきあうすがた'],
+    ['えっち',     'はずかしいすがた'],
+    ['ハゲ',       'まるいけのないあたま'],
+    ['はげ',       'まるいけのないあたま'],
   ];
   let safe = text;
   for (const [ng, ok] of replacements) {
@@ -2765,14 +2867,14 @@ function sanitizeImageText(text) {
 const MAX_IMAGE_RETRIES = 2; // 失敗時に自動で最大2回まで再試行（合計3回トライ）
 let failedTurnIndices = []; // リトライしても最終的に失敗したターン（参考用）
 
-function generateSceneImageBackground(text, turnIdx) {
+function generateSceneImageBackground(text, turnIdx, storyContext) {
   if (!state.keys.openai) return;
   bgGenTotal++;
   const bar = document.getElementById('bg-gen-progress');
   if (bar) bar.style.display = 'flex';
   updateBgGenProgress();
   // キューに追加して順番待ち
-  imageGenQueue.push({ text, turnIdx, retryCount: 0 });
+  imageGenQueue.push({ text, turnIdx, retryCount: 0, storyContext: storyContext || '' });
   if (!imageGenRunning) processImageQueue();
 }
 
@@ -2780,16 +2882,24 @@ async function processImageQueue() {
   imageGenRunning = true;
   while (imageGenQueue.length > 0) {
     const item = imageGenQueue.shift();
-    const { text, turnIdx } = item;
+    const { text, turnIdx, storyContext } = item;
     const retryCount = item.retryCount || 0;
     const currentNum = bgGenCompleted + 1;
 
-    // 生成開始を通知
     updateWaitingStatus('generating', { current: currentNum, total: bgGenTotal });
+
+    // L1（じゆう）：Claudeが文脈を読んで忠実な英語描写を生成
+    let promptText;
+    if (state.safetyLevel === 1) {
+      const l1prompt = await rewriteImagePromptL1(text, storyContext || '', item.isSafetyRetry || false);
+      promptText = l1prompt || sanitizeImageText(text); // Claude失敗時は辞書フォールバック
+    } else {
+      promptText = sanitizeImageText(text);
+    }
 
     let success = false;
     try {
-      success = await generateSceneImage(sanitizeImageText(text), turnIdx);
+      success = await generateSceneImage(promptText, turnIdx);
     } catch(e) {
       console.warn('Image gen exception for turn', turnIdx, e.message);
       updateWaitingStatus('error_network', { msg: e.message?.substring(0, 40) || 'unknown' });
@@ -2797,18 +2907,12 @@ async function processImageQueue() {
     }
 
     if (!success && state.safetyBlocked) {
-      // 安全システムブロック：60秒待ってから自動で再試行（リトライ上限の対象にする）
-      updateBgGenProgressLabel('⏳ あんぜんシステムが はたらきました。しばらく まってね…');
-      let sec = 60;
-      while (sec > 0 && state.safetyBlocked) {
-        updateWaitingStatus('safety_cooldown', { sec });
-        await new Promise(r => setTimeout(r, 1000));
-        sec--;
-      }
       state.safetyBlocked = false;
       if (retryCount < MAX_IMAGE_RETRIES) {
-        imageGenQueue.push({ text, turnIdx, retryCount: retryCount + 1 });
-        continue; // bgGenCompletedは増やさず次のキュー項目へ
+        // L1：Claudeに「もう少し柔らかく」と伝えて即リトライ（60秒待機なし）
+        // L2/L3：同じテキストで再試行
+        imageGenQueue.push({ text, turnIdx, storyContext, retryCount: retryCount + 1, isSafetyRetry: true });
+        continue;
       }
       // リトライ上限到達 → このまま下に進んで失敗確定
     } else if (!success && retryCount < MAX_IMAGE_RETRIES) {
@@ -3359,6 +3463,7 @@ function startBgm() {
   if (!track) return;
 
   bgmAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  bgmAudioCtx.resume().catch(() => {}); // iOSではsuspendedで始まるため
   bgmGainNode = bgmAudioCtx.createGain();
   bgmGainNode.gain.value = 0.18; // 控えめな音量
 
@@ -3479,10 +3584,12 @@ async function playSlide(idx) {
   if (turn.audioUrl) {
     document.getElementById('audio-playing-badge').classList.remove('hidden');
     const audio = new Audio(turn.audioUrl);
+    // タイムアウト付き（iOSでonendedが発火しない場合のフォールバック）
     await new Promise(resolve => {
-      audio.onended = resolve;
-      audio.onerror = resolve;
-      audio.play().catch(resolve);
+      const t = setTimeout(resolve, 15000);
+      audio.onended = () => { clearTimeout(t); resolve(); };
+      audio.onerror = () => { clearTimeout(t); resolve(); };
+      audio.play().catch(() => { clearTimeout(t); resolve(); });
     });
     document.getElementById('audio-playing-badge').classList.add('hidden');
   } else if (turn.text) {
@@ -3497,6 +3604,7 @@ async function playSlide(idx) {
     }
     if (!spoken) {
       // Google TTS失敗時はWeb Speech APIにフォールバック
+      // タイムアウト付き（iOSでonendが発火しない場合のフォールバック）
       await new Promise(resolve => {
         if (!('speechSynthesis' in window)) { setTimeout(resolve, 2000); return; }
         window.speechSynthesis.cancel();
@@ -3507,8 +3615,10 @@ async function playSlide(idx) {
         const voices = window.speechSynthesis.getVoices();
         const jaVoice = voices.find(v => v.lang.startsWith('ja'));
         if (jaVoice) utter.voice = jaVoice;
-        utter.onend = resolve;
-        utter.onerror = () => setTimeout(resolve, 500);
+        const maxMs = Math.max(4000, turn.text.length * 250);
+        const t = setTimeout(resolve, maxMs);
+        utter.onend = () => { clearTimeout(t); resolve(); };
+        utter.onerror = () => { clearTimeout(t); setTimeout(resolve, 300); };
         window.speechSynthesis.speak(utter);
       });
     }
@@ -3572,10 +3682,13 @@ async function playGoogleTTS(text) {
   const data = await res.json();
   const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
   document.getElementById('audio-playing-badge').classList.remove('hidden');
+  // タイムアウト付き（iOSでonendedが発火しない場合のフォールバック）
+  const maxMs = Math.max(5000, text.length * 300);
   await new Promise(resolve => {
-    audio.onended = resolve;
-    audio.onerror = resolve;
-    audio.play().catch(resolve);
+    const t = setTimeout(resolve, maxMs);
+    audio.onended = () => { clearTimeout(t); resolve(); };
+    audio.onerror = () => { clearTimeout(t); resolve(); };
+    audio.play().catch(() => { clearTimeout(t); resolve(); });
   });
   document.getElementById('audio-playing-badge').classList.add('hidden');
 }
