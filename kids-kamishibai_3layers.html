@@ -2889,10 +2889,11 @@ async function processImageQueue() {
     updateWaitingStatus('generating', { current: currentNum, total: bgGenTotal });
 
     // L1（じゆう）：Claudeが文脈を読んで忠実な英語描写を生成
+    // ただし安全ブロック2回目以降 or Claude失敗時は辞書置換にフォールバック
     let promptText;
-    if (state.safetyLevel === 1) {
+    if (state.safetyLevel === 1 && !item.useDictFallback) {
       const l1prompt = await rewriteImagePromptL1(text, storyContext || '', item.isSafetyRetry || false);
-      promptText = l1prompt || sanitizeImageText(text); // Claude失敗時は辞書フォールバック
+      promptText = l1prompt || sanitizeImageText(text);
     } else {
       promptText = sanitizeImageText(text);
     }
@@ -2909,9 +2910,10 @@ async function processImageQueue() {
     if (!success && state.safetyBlocked) {
       state.safetyBlocked = false;
       if (retryCount < MAX_IMAGE_RETRIES) {
-        // L1：Claudeに「もう少し柔らかく」と伝えて即リトライ（60秒待機なし）
-        // L2/L3：同じテキストで再試行
-        imageGenQueue.push({ text, turnIdx, storyContext, retryCount: retryCount + 1, isSafetyRetry: true });
+        // L1 1回目リトライ：Claudeが「もっと柔らかく」で再描写
+        // L1 2回目リトライ / L2/L3：辞書置換にフォールバック（確実に通す）
+        const useDictFallback = state.safetyLevel !== 1 || retryCount >= 1;
+        imageGenQueue.push({ text, turnIdx, storyContext, retryCount: retryCount + 1, isSafetyRetry: !useDictFallback, useDictFallback });
         continue;
       }
       // リトライ上限到達 → このまま下に進んで失敗確定
@@ -2971,11 +2973,11 @@ async function generateSceneImage(text, turnIdx) {
 
   // (gen-overlay removed)
 
-  // フィルターされたターンのテキストをcontextから除外（APIへの汚染を防ぐ）
+  // フィルターされたターンのテキストをcontextから除外し、さらに画像用にサニタイズ
   const storyContext = state.turns
     .slice(0, turnIdx + 1)
     .filter((_, i) => !state.filteredTurnIndices.includes(i))
-    .map(t => t.text)
+    .map(t => sanitizeImageText(t.text || ''))
     .join(' ');
   const imagePrompt = buildImagePrompt(storyContext, text);
 
@@ -3598,7 +3600,9 @@ async function playSlide(idx) {
     let spoken = false;
     if (state.keys.google) {
       try {
-        await playGoogleTTS(turn.text);
+        // fetchハング対策：7秒でタイムアウト
+        const ttsTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('tts_timeout')), 7000));
+        await Promise.race([playGoogleTTS(turn.text), ttsTimeout]);
         spoken = true;
       } catch(e) {}
     }
@@ -3643,15 +3647,12 @@ const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
 async function speakText(text) {
   if (state.keys.google) {
-    // デスクトップ: Google TTS優先（高品質）
     try {
-      await playGoogleTTS(text);
+      const ttsTimeout = new Promise((_, rej) => setTimeout(() => rej(new Error('tts_timeout')), 7000));
+      await Promise.race([playGoogleTTS(text), ttsTimeout]);
       return;
-    } catch(e) {
-      console.warn('Google TTS error:', e);
-    }
+    } catch(e) {}
   }
-  // iOS + フォールバック: Web Speech API (ブラウザ内蔵・iOS対応)
   speakWithSynthesis(text);
 }
 
