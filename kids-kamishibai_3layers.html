@@ -2371,9 +2371,17 @@ async function transcribeWithWhisper() {
                : 'mp4';
     const filename = `audio.${ext}`;
 
+    // 直近のストーリーをプロンプトとして渡し認識精度を向上
+    const storyContext = state.turns.slice(-3).map(t => t.text).join('。');
+    const whisperPrompt = storyContext
+      ? `これは子供向けの即興かみしばいゲームです。${storyContext}`
+      : 'これは子供向けの即興かみしばいゲームです。ひらがな・やさしいことば。';
+
     const form = new FormData();
     form.append('file', state.pendingAudioBlob, filename);
     form.append('language', 'ja');
+    form.append('prompt', whisperPrompt);
+    form.append('temperature', '0');
 
     const res = await fetch(`${PROXY_BASE}/whisper`, {
       method: 'POST',
@@ -3004,12 +3012,14 @@ function buildImagePrompt(context, currentText) {
   const styleKey = state.artStyle || 'mukashi';
   const stylePrompt = ART_STYLES[styleKey]?.prompt || ART_STYLES.mukashi.prompt;
   const charDesc = state.mainCharacter || '昭和レトロ昔話風の丸くて可愛いこどもキャラクター';
-  return `${stylePrompt}
+  // 英語のセーフガード文を先頭に付けてOpenAIの誤検知を防ぐ
+  const safetyPrefix = 'Safe, child-friendly illustration for a kids picture book. Non-violent, wholesome, educational content. ';
+  return `${safetyPrefix}${stylePrompt}
 【重要・キャラクター固定】メインキャラクター: ${charDesc}。このキャラクターの髪型・髪の色・服の色・顔・体型を全シーン必ず統一して描くこと。絶対に変えないこと。
 場面:「${currentText}」
-ストーリー背景:「${context.substring(0, 200)}」
+ストーリー背景:「${context.substring(0, 150)}」
 構図: 横長4:3、子供向け絵本の1シーン。
-【絶対禁止】画像の中に文字・テキスト・ひらがな・カタカナ・漢字・アルファベット・数字・記号を一切含めないこと。pure illustration only, no text, no letters, no words, no writing, no captions of any kind anywhere in the image.`;
+No text, no letters, no words anywhere in the image. Pure illustration only.`;
 }
 
 function showSceneImage(src) {
@@ -3440,13 +3450,35 @@ async function playSlide(idx) {
       audio.play().catch(resolve);
     });
     document.getElementById('audio-playing-badge').classList.add('hidden');
-  } else if (turn.text && state.keys.google) {
-    // Google TTS fallback
-    try {
-      await playGoogleTTS(turn.text);
-    } catch(e) {}
+  } else if (turn.text) {
+    // TTS: iOSはspeechSynthesis優先、デスクトップはGoogle TTS優先
+    document.getElementById('audio-playing-badge').classList.remove('hidden');
+    let spoken = false;
+    if (!_isIOS && state.keys.google) {
+      try {
+        await playGoogleTTS(turn.text);
+        spoken = true;
+      } catch(e) {}
+    }
+    if (!spoken) {
+      // Web Speech API (iOS対応)
+      await new Promise(resolve => {
+        if (!('speechSynthesis' in window)) { setTimeout(resolve, 2000); return; }
+        window.speechSynthesis.cancel();
+        const utter = new SpeechSynthesisUtterance(turn.text);
+        utter.lang = 'ja-JP';
+        utter.rate = 0.85;
+        utter.pitch = 1.1;
+        const voices = window.speechSynthesis.getVoices();
+        const jaVoice = voices.find(v => v.lang.startsWith('ja'));
+        if (jaVoice) utter.voice = jaVoice;
+        utter.onend = resolve;
+        utter.onerror = () => setTimeout(resolve, 500);
+        window.speechSynthesis.speak(utter);
+      });
+    }
+    document.getElementById('audio-playing-badge').classList.add('hidden');
   } else {
-    // Pause between slides
     await sleep(2000);
   }
 
@@ -3459,9 +3491,14 @@ async function playSlide(idx) {
 // ============================================================
 //  SPEAK TEXT (ゲーム中のAI音声読み上げ)
 // ============================================================
+
+// iOS Safari は Audio.play() をユーザー操作なしでブロックするため
+// Web Speech API (speechSynthesis) を優先し、Google TTS はデスクトップのみ使う
+const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
 async function speakText(text) {
-  if (state.keys.google) {
-    // Google TTS優先
+  if (!_isIOS && state.keys.google) {
+    // デスクトップ: Google TTS優先（高品質）
     try {
       await playGoogleTTS(text);
       return;
@@ -3469,19 +3506,21 @@ async function speakText(text) {
       console.warn('Google TTS error:', e);
     }
   }
-  // フォールバック: Web Speech API (ブラウザ内蔵)
-  if ('speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'ja-JP';
-    utter.rate = 0.85;
-    utter.pitch = 1.1;
-    // ja-JP の声があれば使う
-    const voices = window.speechSynthesis.getVoices();
-    const jaVoice = voices.find(v => v.lang.startsWith('ja'));
-    if (jaVoice) utter.voice = jaVoice;
-    window.speechSynthesis.speak(utter);
-  }
+  // iOS + フォールバック: Web Speech API (ブラウザ内蔵・iOS対応)
+  speakWithSynthesis(text);
+}
+
+function speakWithSynthesis(text) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ja-JP';
+  utter.rate = 0.85;
+  utter.pitch = 1.1;
+  const voices = window.speechSynthesis.getVoices();
+  const jaVoice = voices.find(v => v.lang.startsWith('ja'));
+  if (jaVoice) utter.voice = jaVoice;
+  window.speechSynthesis.speak(utter);
 }
 
 async function playGoogleTTS(text) {
