@@ -3642,7 +3642,7 @@ async function playSlide(idx) {
 const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
 async function speakText(text) {
-  if (!_isIOS && state.keys.google) {
+  if (state.keys.google) {
     // デスクトップ: Google TTS優先（高品質）
     try {
       await playGoogleTTS(text);
